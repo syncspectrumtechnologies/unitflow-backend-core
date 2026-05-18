@@ -1,0 +1,686 @@
+[
+    {
+        "id": "cmmqkrge7000m0at9vzzuaqq2",
+        "company_id": "cmp_babanamak_demo",
+        "factory_id": "fac_kanpur",
+        "client_id": "cmm8xxo0x000f0ars5fqz377f",
+        "sales_company_id": "sc_retail",
+        "logistics": null,
+        "order_no": "ORD-20260314-00002",
+        "status": "CONFIRMED",
+        "order_date": "2026-03-14T17:03:30.073Z",
+        "required_by": null,
+        "delivered_at": null,
+        "subtotal": "240",
+        "total_charges": "0",
+        "total": "240",
+        "notes": null,
+        "internal_notes": null,
+        "is_active": true,
+        "created_by": "usr_admin",
+        "created_at": "2026-03-14T17:03:35.359Z",
+        "updated_at": "2026-03-14T17:03:35.359Z",
+        "client": {
+            "id": "cmm8xxo0x000f0ars5fqz377f",
+            "company_name": "Client A"
+        },
+        "factory": {
+            "id": "fac_kanpur",
+            "name": "Kanpur Plant"
+        },
+        "sales_company": {
+            "id": "sc_retail",
+            "name": "Babanamak Retail Pvt Ltd"
+        },
+        "_count": {
+            "items": 1,
+            "invoices": 1
+        }
+    },
+    {
+        "id": "cmmqkrcj500060at961j81yui",
+        "company_id": "cmp_babanamak_demo",
+        "factory_id": "fac_kanpur",
+        "client_id": "cmm8xxo0x000f0ars5fqz377f",
+        "sales_company_id": "sc_retail",
+        "logistics": null,
+        "order_no": "ORD-20260314-00001",
+        "status": "CONFIRMED",
+        "order_date": "2026-03-14T17:03:29.051Z",
+        "required_by": null,
+        "delivered_at": null,
+        "subtotal": "240",
+        "total_charges": "0",
+        "total": "240",
+        "notes": null,
+        "internal_notes": null,
+        "is_active": true,
+        "created_by": "usr_admin",
+        "created_at": "2026-03-14T17:03:30.354Z",
+        "updated_at": "2026-03-14T17:03:30.354Z",
+        "client": {
+            "id": "cmm8xxo0x000f0ars5fqz377f",
+            "company_name": "Client A"
+        },
+        "factory": {
+            "id": "fac_kanpur",
+            "name": "Kanpur Plant"
+        },
+        "sales_company": {
+            "id": "sc_retail",
+            "name": "Babanamak Retail Pvt Ltd"
+        },
+        "_count": {
+            "items": 1,
+            "invoices": 1
+        }
+    },
+    {
+        "id": "cmmmc4yr8001ujm1e3bx9ilqg",
+        "company_id": "cmp_babanamak_demo",
+        "factory_id": "fac_kanpur",
+        "client_id": "cli_amit_traders",
+        "sales_company_id": "sc_retail",
+        "logistics": null,
+        "order_no": "ORD-20260311-175104",
+        "status": "CONFIRMED",
+        "order_date": "2026-03-11T17:51:04.404Z",
+        "required_by": "2026-03-18T05:30:00.000Z",
+        "delivered_at": null,
+        "subtotal": "780",
+        "total_charges": "0",
+        "total": "780",
+        "notes": null,
+        "internal_notes": null,
+        "is_active": true,
+        "created_by": "usr_admin",
+        "created_at": "2026-03-11T17:51:04.436Z",
+        "updated_at": "2026-03-11T17:51:04.436Z",
+        "client": {
+            "id": "cli_amit_traders",
+            "company_name": "Amit Traders"
+        },
+        "factory": {
+            "id": "fac_kanpur",
+            "name": "Kanpur Plant"
+        },
+        "sales_company": {
+            "id": "sc_retail",
+            "name": "Babanamak Retail Pvt Ltd"
+        },
+        "_count": {
+            "items": 1,
+            "invoices": 1
+        }
+    },
+    {
+        "id": "cmmmbd3ka000tjm1edsyvhxci",
+        "company_id": "cmp_babanamak_demo",
+        "factory_id": "fac_kanpur",
+        "client_id": "cli_kanpur_retail",
+        "sales_company_id": "sc_retail",
+        "logistics": null,
+        "order_no": "ORD-20260311-172924",
+        "status": "DISPATCHED",
+        "order_date": "2026-03-11T17:29:24.286Z",
+        "required_by": "2026-03-18T05:30:00.000Z",
+        "delivered_at": null,
+        "subtotal": "86580",
+        "total_charges": "995",
+        "total": "87575",
+        "notes": null,
+        "internal_notes": null,
+        "is_active": true,
+        "created_by": "usr_admin",
+        "created_at": "2026-03-11T17:29:24.298Z",
+        "updated_at": "2026-03-11T17:29:41.073Z",
+        "client": {
+            "id": "cli_kanpur_retail",
+            "company_name": "Kanpur Retail Mart"
+        },
+        "factory": {
+            "id": "fac_kanpur",
+            "name": "Kanpur Plant"
+        },
+        "sales_company": {
+            "id": "sc_retail",
+            "name": "Babanamak Retail Pvt Ltd"
+        },
+        "_count": {
+            "items": 1,
+            "invoices": 1
+        }
+    },
+    {
+        "id": "cmmmba9va0004jm1efdkp1nv7",
+        "company_id": "cmp_babanamak_demo",
+        "factory_id": "fac_kanpur",
+        "client_id": "cli_lko_super",
+        "sales_company_id": "sc_trading",
+        "logistics": null,
+        "order_no": "ORD-20260311-172712",
+        "status": "DISPATCHED",
+        "order_date": "2026-03-11T17:27:12.462Z",
+        "required_by": "2026-03-18T05:30:00.000Z",
+        "delivered_at": null,
+        "subtotal": "3120",
+        "total_charges": "0",
+        "total": "3120",
+        "notes": null,
+        "internal_notes": null,
+        "is_active": true,
+        "created_by": "usr_admin",
+        "created_at": "2026-03-11T17:27:12.502Z",
+        "updated_at": "2026-03-11T17:28:01.518Z",
+        "client": {
+            "id": "cli_lko_super",
+            "company_name": "Lucknow Super Store"
+        },
+        "factory": {
+            "id": "fac_kanpur",
+            "name": "Kanpur Plant"
+        },
+        "sales_company": {
+            "id": "sc_trading",
+            "name": "Babanamak Trading LLP"
+        },
+        "_count": {
+            "items": 1,
+            "invoices": 1
+        }
+    },
+    {
+        "id": "cmmgdwg1e000v0admi7tzinvk",
+        "company_id": "cmp_babanamak_demo",
+        "factory_id": "fac_kanpur",
+        "client_id": "cmm8xxo0x000f0ars5fqz377f",
+        "sales_company_id": "sc_retail",
+        "logistics": null,
+        "order_no": "ORD-20260307-192349",
+        "status": "DISPATCHED",
+        "order_date": "2026-03-07T13:53:48.171Z",
+        "required_by": null,
+        "delivered_at": null,
+        "subtotal": "20400",
+        "total_charges": "0",
+        "total": "20400",
+        "notes": null,
+        "internal_notes": null,
+        "is_active": true,
+        "created_by": "usr_admin",
+        "created_at": "2026-03-07T13:53:49.106Z",
+        "updated_at": "2026-03-07T14:02:40.164Z",
+        "client": {
+            "id": "cmm8xxo0x000f0ars5fqz377f",
+            "company_name": "Client A"
+        },
+        "factory": {
+            "id": "fac_kanpur",
+            "name": "Kanpur Plant"
+        },
+        "sales_company": {
+            "id": "sc_retail",
+            "name": "Babanamak Retail Pvt Ltd"
+        },
+        "_count": {
+            "items": 1,
+            "invoices": 1
+        }
+    },
+    {
+        "id": "cmmgdgtih000c0admf9vp9a83",
+        "company_id": "cmp_babanamak_demo",
+        "factory_id": "fac_kanpur",
+        "client_id": "cmm8xxo0x000f0ars5fqz377f",
+        "sales_company_id": "sc_retail",
+        "logistics": null,
+        "order_no": "ORD-20260307-191140",
+        "status": "DISPATCHED",
+        "order_date": "2026-03-07T13:41:39.147Z",
+        "required_by": null,
+        "delivered_at": null,
+        "subtotal": "4800",
+        "total_charges": "0",
+        "total": "4800",
+        "notes": null,
+        "internal_notes": null,
+        "is_active": true,
+        "created_by": "usr_admin",
+        "created_at": "2026-03-07T13:41:40.073Z",
+        "updated_at": "2026-03-07T13:56:01.631Z",
+        "client": {
+            "id": "cmm8xxo0x000f0ars5fqz377f",
+            "company_name": "Client A"
+        },
+        "factory": {
+            "id": "fac_kanpur",
+            "name": "Kanpur Plant"
+        },
+        "sales_company": {
+            "id": "sc_retail",
+            "name": "Babanamak Retail Pvt Ltd"
+        },
+        "_count": {
+            "items": 1,
+            "invoices": 1
+        }
+    },
+    {
+        "id": "cmmekjdnq001jjn1e8sjwqr79",
+        "company_id": "cmp_babanamak_demo",
+        "factory_id": "fac_kanpur",
+        "client_id": "cli_amit_traders",
+        "sales_company_id": "sc_trading",
+        "logistics": "delhivery",
+        "order_no": "ORD-20260306-072404",
+        "status": "CANCELLED",
+        "order_date": "2026-03-06T07:24:04.424Z",
+        "required_by": null,
+        "delivered_at": null,
+        "subtotal": "5000",
+        "total_charges": "200",
+        "total": "5200",
+        "notes": null,
+        "internal_notes": null,
+        "is_active": true,
+        "created_by": "usr_admin",
+        "created_at": "2026-03-06T07:24:04.454Z",
+        "updated_at": "2026-03-06T07:29:01.116Z",
+        "client": {
+            "id": "cli_amit_traders",
+            "company_name": "Amit Traders"
+        },
+        "factory": {
+            "id": "fac_kanpur",
+            "name": "Kanpur Plant"
+        },
+        "sales_company": {
+            "id": "sc_trading",
+            "name": "Babanamak Trading LLP"
+        },
+        "_count": {
+            "items": 1,
+            "invoices": 1
+        }
+    },
+    {
+        "id": "cmmd7ofad0004ha1eoafwewlo",
+        "company_id": "cmp_babanamak_demo",
+        "factory_id": "fac_noida",
+        "client_id": "cli_shyam_chem",
+        "sales_company_id": "sc_retail",
+        "logistics": null,
+        "order_no": "ORD-20260305-083618",
+        "status": "CONFIRMED",
+        "order_date": "2026-03-05T08:36:18.571Z",
+        "required_by": "2026-03-12T05:30:00.000Z",
+        "delivered_at": null,
+        "subtotal": "1200",
+        "total_charges": "2000",
+        "total": "3200",
+        "notes": null,
+        "internal_notes": null,
+        "is_active": true,
+        "created_by": "usr_admin",
+        "created_at": "2026-03-05T08:36:18.661Z",
+        "updated_at": "2026-03-05T08:36:18.661Z",
+        "client": {
+            "id": "cli_shyam_chem",
+            "company_name": "Shyam Chemicals"
+        },
+        "factory": {
+            "id": "fac_noida",
+            "name": "Noida Unit"
+        },
+        "sales_company": {
+            "id": "sc_retail",
+            "name": "Babanamak Retail Pvt Ltd"
+        },
+        "_count": {
+            "items": 1,
+            "invoices": 1
+        }
+    },
+    {
+        "id": "cmmc8971h00040ac0a49qzvn9",
+        "company_id": "cmp_babanamak_demo",
+        "factory_id": "fac_noida",
+        "client_id": "cmm8xxo0x000f0ars5fqz377f",
+        "sales_company_id": "sc_retail",
+        "logistics": "BlueDart",
+        "order_no": "ORD-20260304-213441",
+        "status": "CONFIRMED",
+        "order_date": "2026-03-04T16:04:40.266Z",
+        "required_by": null,
+        "delivered_at": null,
+        "subtotal": "240",
+        "total_charges": "300",
+        "total": "540",
+        "notes": "Multi-factory one split testing",
+        "internal_notes": null,
+        "is_active": true,
+        "created_by": "usr_admin",
+        "created_at": "2026-03-04T16:04:41.573Z",
+        "updated_at": "2026-03-04T16:04:41.573Z",
+        "client": {
+            "id": "cmm8xxo0x000f0ars5fqz377f",
+            "company_name": "Client A"
+        },
+        "factory": {
+            "id": "fac_noida",
+            "name": "Noida Unit"
+        },
+        "sales_company": {
+            "id": "sc_retail",
+            "name": "Babanamak Retail Pvt Ltd"
+        },
+        "_count": {
+            "items": 1,
+            "invoices": 1
+        }
+    },
+    {
+        "id": "cmmc84b1g00020acz41lxc8vl",
+        "company_id": "cmp_babanamak_demo",
+        "factory_id": "fac_noida",
+        "client_id": "cmm8xxo0x000f0ars5fqz377f",
+        "sales_company_id": "sc_retail",
+        "logistics": "BlueDart",
+        "order_no": "ORD-20260304-213053",
+        "status": "CONFIRMED",
+        "order_date": "2026-03-04T16:00:51.177Z",
+        "required_by": null,
+        "delivered_at": null,
+        "subtotal": "12000",
+        "total_charges": "300",
+        "total": "12300",
+        "notes": "Multi-factory split testing",
+        "internal_notes": null,
+        "is_active": true,
+        "created_by": "usr_admin",
+        "created_at": "2026-03-04T16:00:53.477Z",
+        "updated_at": "2026-03-04T16:00:53.477Z",
+        "client": {
+            "id": "cmm8xxo0x000f0ars5fqz377f",
+            "company_name": "Client A"
+        },
+        "factory": {
+            "id": "fac_noida",
+            "name": "Noida Unit"
+        },
+        "sales_company": {
+            "id": "sc_retail",
+            "name": "Babanamak Retail Pvt Ltd"
+        },
+        "_count": {
+            "items": 1,
+            "invoices": 1
+        }
+    },
+    {
+        "id": "cmmcfhkda0002el1e2shpib86",
+        "company_id": "cmp_babanamak_demo",
+        "factory_id": "fac_noida",
+        "client_id": "cli_delhi_wholesale",
+        "sales_company_id": "sc_trading",
+        "logistics": null,
+        "order_no": "ORD-20260304-192709",
+        "status": "CONFIRMED",
+        "order_date": "2026-03-04T05:30:00.000Z",
+        "required_by": "2026-03-11T05:30:00.000Z",
+        "delivered_at": null,
+        "subtotal": "1200",
+        "total_charges": "0",
+        "total": "1200",
+        "notes": null,
+        "internal_notes": null,
+        "is_active": true,
+        "created_by": "usr_admin",
+        "created_at": "2026-03-04T19:27:09.407Z",
+        "updated_at": "2026-03-04T19:27:09.407Z",
+        "client": {
+            "id": "cli_delhi_wholesale",
+            "company_name": "Delhi Wholesale Hub"
+        },
+        "factory": {
+            "id": "fac_noida",
+            "name": "Noida Unit"
+        },
+        "sales_company": {
+            "id": "sc_trading",
+            "name": "Babanamak Trading LLP"
+        },
+        "_count": {
+            "items": 1,
+            "invoices": 1
+        }
+    },
+    {
+        "id": "cmmc8ocv90002g41wgi85sl75",
+        "company_id": "cmp_babanamak_demo",
+        "factory_id": "fac_noida",
+        "client_id": "cli_delhi_wholesale",
+        "sales_company_id": "sc_retail",
+        "logistics": null,
+        "order_no": "ORD-20260304-161628",
+        "status": "CONFIRMED",
+        "order_date": "2026-03-04T00:00:00.000Z",
+        "required_by": null,
+        "delivered_at": null,
+        "subtotal": "2040",
+        "total_charges": "0",
+        "total": "2040",
+        "notes": null,
+        "internal_notes": null,
+        "is_active": true,
+        "created_by": "usr_admin",
+        "created_at": "2026-03-04T16:16:28.965Z",
+        "updated_at": "2026-03-04T16:16:28.965Z",
+        "client": {
+            "id": "cli_delhi_wholesale",
+            "company_name": "Delhi Wholesale Hub"
+        },
+        "factory": {
+            "id": "fac_noida",
+            "name": "Noida Unit"
+        },
+        "sales_company": {
+            "id": "sc_retail",
+            "name": "Babanamak Retail Pvt Ltd"
+        },
+        "_count": {
+            "items": 1,
+            "invoices": 1
+        }
+    },
+    {
+        "id": "cmmb5d662000fjo1e8gkao1r3",
+        "company_id": "cmp_babanamak_demo",
+        "factory_id": "fac_kanpur",
+        "client_id": "cli_amit_traders",
+        "sales_company_id": "sc_retail",
+        "logistics": null,
+        "order_no": "ORD-20260303-215602",
+        "status": "CONFIRMED",
+        "order_date": "2026-03-03T00:00:00.000Z",
+        "required_by": "2026-03-10T00:00:00.000Z",
+        "delivered_at": null,
+        "subtotal": "12000",
+        "total_charges": "1000",
+        "total": "13000",
+        "notes": null,
+        "internal_notes": null,
+        "is_active": true,
+        "created_by": "usr_admin",
+        "created_at": "2026-03-03T21:56:02.042Z",
+        "updated_at": "2026-03-03T21:56:02.042Z",
+        "client": {
+            "id": "cli_amit_traders",
+            "company_name": "Amit Traders"
+        },
+        "factory": {
+            "id": "fac_kanpur",
+            "name": "Kanpur Plant"
+        },
+        "sales_company": {
+            "id": "sc_retail",
+            "name": "Babanamak Retail Pvt Ltd"
+        },
+        "_count": {
+            "items": 1,
+            "invoices": 1
+        }
+    },
+    {
+        "id": "cmmb58zee0002jo1e89oxctnw",
+        "company_id": "cmp_babanamak_demo",
+        "factory_id": "fac_kanpur",
+        "client_id": "cli_lko_super",
+        "sales_company_id": "sc_retail",
+        "logistics": null,
+        "order_no": "ORD-20260303-215246",
+        "status": "CONFIRMED",
+        "order_date": "2026-03-03T00:00:00.000Z",
+        "required_by": "2026-03-10T00:00:00.000Z",
+        "delivered_at": null,
+        "subtotal": "2200",
+        "total_charges": "0",
+        "total": "2200",
+        "notes": null,
+        "internal_notes": null,
+        "is_active": true,
+        "created_by": "usr_admin",
+        "created_at": "2026-03-03T21:52:46.646Z",
+        "updated_at": "2026-03-03T21:52:46.646Z",
+        "client": {
+            "id": "cli_lko_super",
+            "company_name": "Lucknow Super Store"
+        },
+        "factory": {
+            "id": "fac_kanpur",
+            "name": "Kanpur Plant"
+        },
+        "sales_company": {
+            "id": "sc_retail",
+            "name": "Babanamak Retail Pvt Ltd"
+        },
+        "_count": {
+            "items": 1,
+            "invoices": 1
+        }
+    },
+    {
+        "id": "cmm8ysnss000s0arsz89xge81",
+        "company_id": "cmp_babanamak_demo",
+        "factory_id": "fac_kanpur",
+        "client_id": "cmm8xxo0x000f0ars5fqz377f",
+        "sales_company_id": "sc_retail",
+        "logistics": "BlueDart",
+        "order_no": "ORD-20260302-144635",
+        "status": "CANCELLED",
+        "order_date": "2026-03-02T09:16:32.959Z",
+        "required_by": null,
+        "delivered_at": null,
+        "subtotal": "80000",
+        "total_charges": "300",
+        "total": "80300",
+        "notes": "Multi-factory split test",
+        "internal_notes": null,
+        "is_active": true,
+        "created_by": "usr_admin",
+        "created_at": "2026-03-02T09:16:35.069Z",
+        "updated_at": "2026-03-02T09:39:23.162Z",
+        "client": {
+            "id": "cmm8xxo0x000f0ars5fqz377f",
+            "company_name": "Client A"
+        },
+        "factory": {
+            "id": "fac_kanpur",
+            "name": "Kanpur Plant"
+        },
+        "sales_company": {
+            "id": "sc_retail",
+            "name": "Babanamak Retail Pvt Ltd"
+        },
+        "_count": {
+            "items": 1,
+            "invoices": 1
+        }
+    },
+    {
+        "id": "ord_0001",
+        "company_id": "cmp_babanamak_demo",
+        "factory_id": "fac_kanpur",
+        "client_id": "cli_kanpur_retail",
+        "sales_company_id": "sc_trading",
+        "logistics": "BlueDart",
+        "order_no": "SO-2026-0001",
+        "status": "DELIVERED",
+        "order_date": "2026-02-20T19:03:38.426Z",
+        "required_by": "2026-02-22T19:03:38.426Z",
+        "delivered_at": "2026-02-23T19:03:38.426Z",
+        "subtotal": "540",
+        "total_charges": "60",
+        "total": "600",
+        "notes": "Delivery to main outlet",
+        "internal_notes": "Handle with care",
+        "is_active": true,
+        "created_by": "usr_sales",
+        "created_at": "2026-02-20T19:03:38.426Z",
+        "updated_at": "2026-02-23T19:03:38.426Z",
+        "client": {
+            "id": "cli_kanpur_retail",
+            "company_name": "Kanpur Retail Mart"
+        },
+        "factory": {
+            "id": "fac_kanpur",
+            "name": "Kanpur Plant"
+        },
+        "sales_company": {
+            "id": "sc_trading",
+            "name": "Babanamak Trading LLP"
+        },
+        "_count": {
+            "items": 3,
+            "invoices": 1
+        }
+    },
+    {
+        "id": "ord_0003",
+        "company_id": "cmp_babanamak_demo",
+        "factory_id": "fac_kanpur",
+        "client_id": "cli_amit_traders",
+        "sales_company_id": "sc_trading",
+        "logistics": null,
+        "order_no": "SO-2026-0003",
+        "status": "CANCELLED",
+        "order_date": "2026-02-17T19:03:39.457Z",
+        "required_by": "2026-02-19T19:03:39.457Z",
+        "delivered_at": null,
+        "subtotal": "360",
+        "total_charges": "0",
+        "total": "360",
+        "notes": "Customer cancelled before dispatch",
+        "internal_notes": null,
+        "is_active": true,
+        "created_by": "usr_sales",
+        "created_at": "2026-02-17T19:03:39.457Z",
+        "updated_at": "2026-02-18T19:03:39.457Z",
+        "client": {
+            "id": "cli_amit_traders",
+            "company_name": "Amit Traders"
+        },
+        "factory": {
+            "id": "fac_kanpur",
+            "name": "Kanpur Plant"
+        },
+        "sales_company": {
+            "id": "sc_trading",
+            "name": "Babanamak Trading LLP"
+        },
+        "_count": {
+            "items": 1,
+            "invoices": 1
+        }
+    }
+]

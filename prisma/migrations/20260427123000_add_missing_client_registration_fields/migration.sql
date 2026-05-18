@@ -1,0 +1,5 @@
+ALTER TABLE "Client"
+  ADD COLUMN IF NOT EXISTS "registration_type" TEXT,
+  ADD COLUMN IF NOT EXISTS "pan_it_no" TEXT,
+  ADD COLUMN IF NOT EXISTS "mobile_no" TEXT,
+  ADD COLUMN IF NOT EXISTS "country" TEXT;

@@ -1,0 +1,1654 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL")
+}
+
+//
+// ENUMS
+//
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum AuthProvider {
+  LOCAL
+}
+
+enum InventoryMovementType {
+  IN
+  OUT
+  DELETE
+  ADJUSTMENT
+}
+
+enum InventorySourceType {
+  PRODUCTION
+  ORDER
+  MANUAL
+  TRANSFER
+  RETURN
+  OPENING
+}
+
+enum OrderStatus {
+  DRAFT
+  CONFIRMED
+  PROCESSING
+  DISPATCHED
+  COMPLETED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  CLOSED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  PENDING
+  SENT
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  VOID
+}
+
+enum InvoiceKind {
+  PROFORMA
+  TAX_INVOICE
+  CREDIT_NOTE
+  DEBIT_NOTE
+}
+
+enum BalanceSide {
+  DEBIT
+  CREDIT
+}
+
+enum AccountingVoucherType {
+  OPENING
+  GENERAL
+  DEBIT_NOTE
+  CREDIT_NOTE
+}
+
+enum BusinessSide {
+  SALES
+  PURCHASE
+  GENERAL
+}
+
+enum PurchaseStatus {
+  DRAFT
+  ORDERED
+  RECEIVED
+  CANCELLED
+  CLOSED
+}
+
+enum PaymentStatus {
+  RECORDED
+  REVERSED
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  UPI
+  CHEQUE
+  CARD
+  OTHER
+}
+
+enum PurchasePaymentSource {
+  DIRECT
+  ADVANCE_APPLIED
+}
+
+enum AdvanceSide {
+  SALES
+  PURCHASE
+}
+
+enum MessageChannel {
+  EMAIL
+  WHATSAPP
+}
+
+enum DispatchJobStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum MessageStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+}
+
+enum ChargeType {
+  TAX
+  SHIPPING
+  DISCOUNT
+  OTHER
+}
+
+//
+// BASE / TENANT
+//
+
+model Company {
+  id             String  @id @default(cuid())
+  name           String
+  legal_name     String?
+  gstin          String?
+  phone          String?
+  email          String?
+  address        String?
+  state          String?
+  state_code     String?
+  is_gst_enabled Boolean @default(true)
+  is_active      Boolean @default(true)
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  factories   Factory[]
+  users       User[]
+  roles       Role[]
+  permissions Permission[]
+
+  // Company-level catalog & CRM
+  product_categories       ProductCategory[]
+  products                 Product[]
+  clients                  Client[]
+  compliance_reports       ComplianceReport[]
+  UserSession              UserSession[]
+  password_reset_otps      PasswordResetOtp[]
+  UserRoleMap              UserRoleMap[]
+  RolePermissionMap        RolePermissionMap[]
+  UserPermissionMap        UserPermissionMap[]
+  UserFactoryMap           UserFactoryMap[]
+  ActivityLog              ActivityLog[]
+  ClientContact            ClientContact[]
+  ClientProduct            ClientProduct[]
+  ClientCategory           ClientCategory[]
+  ProductionLog            ProductionLog[]
+  InventoryMovement        InventoryMovement[]
+  StockSnapshot            StockSnapshot[]
+  stock_balances           StockBalance[]
+  number_sequences         NumberSequence[]
+  Order                    Order[]
+  OrderItem                OrderItem[]
+  OrderCharge              OrderCharge[]
+  OrderStatusHistory       OrderStatusHistory[]
+  OrderFulfillment         OrderFulfillment[]
+  Invoice                  Invoice[]
+  InvoiceItem              InvoiceItem[]
+  InvoiceCharge            InvoiceCharge[]
+  InvoiceStatusHistory     InvoiceStatusHistory[]
+  Payment                  Payment[]
+  PaymentAllocation        PaymentAllocation[]
+  Purchase                 Purchase[]
+  purchase_advances        PurchaseAdvance[]
+  PurchaseItem             PurchaseItem[]
+  PurchaseCharge           PurchaseCharge[]
+  PurchaseStatusHistory    PurchaseStatusHistory[]
+  PurchasePayment          PurchasePayment[]
+  MessageTemplate          MessageTemplate[]
+  MessageCampaign          MessageCampaign[]
+  MessageRecipient         MessageRecipient[]
+  MessageLog               MessageLog[]
+  message_dispatch_jobs    MessageDispatchJob[]
+  accounting_vouchers      AccountingVoucher[]
+  accounting_voucher_lines AccountingVoucherLine[]
+
+  // Legal entities used for sales (billing company selection on orders/invoices/payments)
+  sales_companies SalesCompany[]
+  platform_config CompanyPlatformConfig?
+
+  // Internal realtime chat + announcements
+  conversations        Conversation[]
+  conversation_members ConversationMember[]
+  chat_messages        ChatMessage[]
+  broadcast_messages   BroadcastMessage[]
+  broadcast_recipients BroadcastRecipient[]
+
+  @@index([is_active])
+}
+
+// Sales / billing companies within a tenant.
+// Example: one tenant may operate multiple legal entities for invoicing.
+model SalesCompany {
+  id         String @id @default(cuid())
+  company_id String
+
+  name                    String
+  legal_name              String?
+  gstin                   String?
+  phone                   String?
+  email                   String?
+  address                 String?
+  office_address          String?
+  secondary_address_label String?
+  secondary_address       String?
+  tertiary_address_label  String?
+  tertiary_address        String?
+  fssai_no                String?
+  state_name              String?
+  state_code              String?
+  is_gst_enabled          Boolean?
+  is_active               Boolean  @default(true)
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  company Company @relation(fields: [company_id], references: [id])
+
+  orders   Order[]
+  invoices Invoice[]
+  payments Payment[]
+
+  @@unique([company_id, name])
+  @@index([company_id, is_active])
+}
+
+model Factory {
+  id         String  @id @default(cuid())
+  company_id String
+  name       String
+  code       String?
+  address    String?
+  is_active  Boolean @default(true)
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  company Company @relation(fields: [company_id], references: [id])
+
+  // Factory-scoped operational data
+  production_logs     ProductionLog[]
+  inventory_movements InventoryMovement[]
+  stock_snapshots     StockSnapshot[]
+  stock_balances      StockBalance[]
+  orders              Order[]
+  order_fulfillments  OrderFulfillment[]
+  invoices            Invoice[]
+  purchases           Purchase[]
+  purchase_advances   PurchaseAdvance[]
+  payments            Payment[]
+  accounting_vouchers AccountingVoucher[]
+
+  user_factory_map UserFactoryMap[]
+
+  @@unique([company_id, name])
+  @@index([company_id, is_active])
+}
+
+//
+// AUTH / RBAC
+//
+
+model User {
+  id            String       @id @default(cuid())
+  company_id    String
+  email         String
+  phone         String?
+  name          String
+  password_hash String
+  provider      AuthProvider @default(LOCAL)
+
+  status   UserStatus @default(ACTIVE)
+  is_admin Boolean    @default(false)
+
+  last_login_at DateTime?
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+
+  company Company @relation(fields: [company_id], references: [id])
+
+  roles_map           UserRoleMap[]
+  permissions_map     UserPermissionMap[]
+  factories_map       UserFactoryMap[]
+  sessions            UserSession[]
+  password_reset_otps PasswordResetOtp[]
+  activity_logs       ActivityLog[]
+
+  // Internal realtime chat + announcements
+  conversation_members ConversationMember[]
+  chat_messages_sent   ChatMessage[]        @relation("ChatMessageSender")
+  broadcasts_sent      BroadcastMessage[]   @relation("BroadcastSender")
+  broadcast_recipients BroadcastRecipient[]
+
+  @@index([company_id, status])
+  @@index([company_id, is_admin])
+  @@unique([company_id, email])
+}
+
+model UserSession {
+  id           String    @id @default(cuid())
+  company_id   String
+  user_id      String
+  token_jti    String    @unique
+  ip           String?
+  user_agent   String?
+  last_seen_at DateTime  @default(now())
+  expires_at   DateTime
+  revoked_at   DateTime?
+
+  created_at DateTime @default(now())
+
+  company Company @relation(fields: [company_id], references: [id])
+  user    User    @relation(fields: [user_id], references: [id])
+
+  @@index([company_id, user_id])
+  @@index([company_id, revoked_at, expires_at])
+}
+
+model PasswordResetOtp {
+  id         String @id @default(cuid())
+  company_id String
+  user_id    String
+  email      String
+
+  otp_hash      String
+  attempt_count Int       @default(0)
+  expires_at    DateTime
+  used_at       DateTime?
+
+  requested_ip         String?
+  requested_user_agent String?
+
+  created_at DateTime @default(now())
+
+  company Company @relation(fields: [company_id], references: [id])
+  user    User    @relation(fields: [user_id], references: [id])
+
+  @@index([company_id, user_id, expires_at])
+  @@index([user_id, used_at, expires_at])
+  @@index([company_id, email, created_at])
+}
+
+model Role {
+  id          String  @id @default(cuid())
+  company_id  String
+  name        String
+  description String?
+  is_system   Boolean @default(false)
+  is_active   Boolean @default(true)
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  company Company @relation(fields: [company_id], references: [id])
+
+  user_map         UserRoleMap[]
+  role_permissions RolePermissionMap[]
+
+  @@unique([company_id, name])
+  @@index([company_id, is_active])
+}
+
+model Permission {
+  id          String  @id @default(cuid())
+  company_id  String
+  key         String
+  description String?
+  is_active   Boolean @default(true)
+
+  created_at DateTime @default(now())
+
+  company  Company             @relation(fields: [company_id], references: [id])
+  role_map RolePermissionMap[]
+  user_map UserPermissionMap[]
+
+  @@unique([company_id, key])
+  @@index([company_id, is_active])
+}
+
+model UserRoleMap {
+  id         String @id @default(cuid())
+  company_id String
+  user_id    String
+  role_id    String
+
+  created_at DateTime @default(now())
+  created_by String?
+
+  user    User    @relation(fields: [user_id], references: [id])
+  role    Role    @relation(fields: [role_id], references: [id])
+  company Company @relation(fields: [company_id], references: [id])
+
+  @@unique([company_id, user_id, role_id])
+  @@index([company_id, user_id])
+}
+
+model RolePermissionMap {
+  id            String @id @default(cuid())
+  company_id    String
+  role_id       String
+  permission_id String
+
+  created_at DateTime @default(now())
+  created_by String?
+
+  company    Company    @relation(fields: [company_id], references: [id])
+  role       Role       @relation(fields: [role_id], references: [id])
+  permission Permission @relation(fields: [permission_id], references: [id])
+
+  @@unique([company_id, role_id, permission_id])
+  @@index([company_id, role_id])
+}
+
+// Allows admin to grant/revoke specific permissions directly to a user
+// in addition to role-based permissions.
+model UserPermissionMap {
+  id            String @id @default(cuid())
+  company_id    String
+  user_id       String
+  permission_id String
+
+  created_at DateTime @default(now())
+  created_by String?
+
+  company    Company    @relation(fields: [company_id], references: [id])
+  user       User       @relation(fields: [user_id], references: [id])
+  permission Permission @relation(fields: [permission_id], references: [id])
+
+  @@unique([company_id, user_id, permission_id])
+  @@index([company_id, user_id])
+}
+
+model UserFactoryMap {
+  id         String @id @default(cuid())
+  company_id String
+  user_id    String
+  factory_id String
+
+  created_at DateTime @default(now())
+  created_by String?
+
+  user    User    @relation(fields: [user_id], references: [id])
+  factory Factory @relation(fields: [factory_id], references: [id])
+  company Company @relation(fields: [company_id], references: [id])
+
+  @@unique([company_id, user_id, factory_id])
+  @@index([company_id, factory_id])
+}
+
+//
+model NumberSequence {
+  id         String @id @default(cuid())
+  company_id String
+  key        String
+  last_value Int    @default(0)
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  company Company @relation(fields: [company_id], references: [id])
+
+  @@unique([company_id, key])
+  @@index([company_id, updated_at])
+}
+
+// AUDIT
+//
+
+model ActivityLog {
+  id         String  @id @default(cuid())
+  company_id String
+  factory_id String?
+
+  user_id     String?
+  action      String
+  entity_type String?
+  entity_id   String?
+  meta        Json?
+
+  ip         String?
+  user_agent String?
+
+  created_at DateTime @default(now())
+
+  company Company @relation(fields: [company_id], references: [id])
+  user    User?   @relation(fields: [user_id], references: [id])
+
+  @@index([company_id, factory_id, created_at])
+  @@index([company_id, user_id, created_at])
+}
+
+//
+// PRODUCT CATALOG (company-level)
+//
+
+model ProductCategory {
+  id          String  @id @default(cuid())
+  company_id  String
+  name        String
+  description String?
+  is_active   Boolean @default(true)
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  company           Company          @relation(fields: [company_id], references: [id])
+  products          Product[]
+  client_categories ClientCategory[]
+
+  @@unique([company_id, name])
+  @@index([company_id, is_active])
+}
+
+model Product {
+  id          String  @id @default(cuid())
+  company_id  String
+  category_id String
+  name        String
+  sku         String?
+  unit        String // e.g. KG, PCS, SACK, PACK
+  pack_size   String? // e.g. "25kg sack", "200g pouch" (variant-like)
+  price       Decimal @default(0) @db.Decimal(15, 2) // selling price (default 0)
+  description String?
+  is_active   Boolean @default(true)
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  company  Company         @relation(fields: [company_id], references: [id])
+  category ProductCategory @relation(fields: [category_id], references: [id])
+
+  // links
+  client_products          ClientProduct[]
+  production_logs          ProductionLog[]
+  inventory_movements      InventoryMovement[]
+  order_items              OrderItem[]
+  order_fulfillments       OrderFulfillment[]
+  invoice_items            InvoiceItem[]
+  StockSnapshot            StockSnapshot[]
+  stock_balances           StockBalance[]
+  accounting_voucher_lines AccountingVoucherLine[]
+
+  @@unique([company_id, name, pack_size])
+  @@index([company_id, category_id, is_active])
+  @@index([company_id, is_active, updated_at])
+}
+
+//
+// CLIENTS (company-level, visible across all factories)
+//
+
+model Client {
+  id         String @id @default(cuid())
+  company_id String
+
+  company_name           String
+  gstin                  String?
+  registration_type      String?
+  pan_it_no              String?
+  phone                  String?
+  mobile_no              String?
+  email                  String?
+  address                String?
+  city                   String?
+  state                  String?
+  country                String?
+  pincode                String?
+  opening_balance_amount Decimal     @default(0) @db.Decimal(15, 2)
+  opening_balance_type   BalanceSide @default(DEBIT)
+  opening_balance_date   DateTime?
+
+  is_active Boolean @default(true)
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  company             Company                 @relation(fields: [company_id], references: [id])
+  contacts            ClientContact[]
+  products            ClientProduct[]
+  categories          ClientCategory[]
+  orders              Order[]
+  invoices            Invoice[]
+  Payment             Payment[]
+  purchases           Purchase[]
+  purchase_advances   PurchaseAdvance[]
+  accounting_vouchers AccountingVoucher[]     @relation("AccountingVoucherClient")
+  accounting_lines    AccountingVoucherLine[] @relation("AccountingLineClient")
+
+  @@unique([company_id, company_name])
+  @@index([company_id, is_active])
+  @@index([company_id, is_active, updated_at])
+}
+
+model ClientContact {
+  id         String @id @default(cuid())
+  company_id String
+  client_id  String
+
+  name        String
+  designation String?
+  phone       String?
+  email       String?
+  address     String?
+
+  is_active Boolean @default(true)
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  company Company @relation(fields: [company_id], references: [id])
+  client  Client  @relation(fields: [client_id], references: [id])
+
+  @@index([company_id, client_id, is_active])
+}
+
+model ClientProduct {
+  id         String @id @default(cuid())
+  company_id String
+  client_id  String
+  product_id String
+
+  // Optional: per-client default pricing / terms
+  default_price Decimal? @db.Decimal(15, 2)
+  notes         String?
+  is_active     Boolean  @default(true)
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  company Company @relation(fields: [company_id], references: [id])
+  client  Client  @relation(fields: [client_id], references: [id])
+  product Product @relation(fields: [product_id], references: [id])
+
+  @@unique([company_id, client_id, product_id])
+  @@index([company_id, product_id])
+}
+
+//
+// PRODUCTION (factory-scoped)
+//
+
+model ClientCategory {
+  id          String @id @default(cuid())
+  company_id  String
+  client_id   String
+  category_id String
+
+  is_active  Boolean  @default(true)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  company  Company         @relation(fields: [company_id], references: [id])
+  client   Client          @relation(fields: [client_id], references: [id])
+  category ProductCategory @relation(fields: [category_id], references: [id])
+
+  @@unique([company_id, client_id, category_id])
+  @@index([company_id, client_id, is_active])
+  @@index([company_id, category_id, is_active])
+}
+
+model ProductionLog {
+  id         String @id @default(cuid())
+  company_id String
+  factory_id String
+  product_id String
+
+  date     DateTime // production date (store date as DateTime for flexibility)
+  quantity Decimal  @db.Decimal(15, 2)
+  remarks  String?
+
+  created_by String?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  // Relations
+  company Company @relation(fields: [company_id], references: [id])
+  factory Factory @relation(fields: [factory_id], references: [id])
+  product Product @relation(fields: [product_id], references: [id])
+
+  @@index([company_id, factory_id, date])
+  @@index([company_id, factory_id, product_id, date])
+}
+
+//
+// INVENTORY (append-only movements; stock is derived)
+//
+
+model InventoryMovement {
+  id         String @id @default(cuid())
+  company_id String
+  factory_id String
+  product_id String
+
+  type        InventoryMovementType
+  source_type InventorySourceType
+  source_id   String? // link to ProductionLog / Order / Return etc.
+
+  date      DateTime @default(now())
+  quantity  Decimal  @db.Decimal(15, 2)
+  unit_cost Decimal? @db.Decimal(15, 2)
+
+  remarks String?
+
+  created_by String?
+  created_at DateTime @default(now())
+
+  company Company @relation(fields: [company_id], references: [id])
+  factory Factory @relation(fields: [factory_id], references: [id])
+  product Product @relation(fields: [product_id], references: [id])
+
+  @@index([company_id, factory_id, date])
+  @@index([company_id, factory_id, product_id, date])
+  @@index([company_id, source_type, source_id])
+}
+
+// Optional performance helper (not required; can be built later)
+// Stores end-of-day stock so monthly/yearly inventory screens are faster.
+model StockSnapshot {
+  id         String @id @default(cuid())
+  company_id String
+  factory_id String
+  product_id String
+
+  as_of_date DateTime // typically end of day
+  quantity   Decimal  @db.Decimal(15, 2)
+
+  created_at DateTime @default(now())
+
+  company Company @relation(fields: [company_id], references: [id])
+  factory Factory @relation(fields: [factory_id], references: [id])
+  product Product @relation(fields: [product_id], references: [id])
+
+  @@unique([company_id, factory_id, product_id, as_of_date])
+  @@index([company_id, factory_id, as_of_date])
+}
+
+//
+model StockBalance {
+  id         String @id @default(cuid())
+  company_id String
+  factory_id String
+  product_id String
+
+  quantity Decimal @default(0) @db.Decimal(15, 2)
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  company Company @relation(fields: [company_id], references: [id])
+  factory Factory @relation(fields: [factory_id], references: [id])
+  product Product @relation(fields: [product_id], references: [id])
+
+  @@unique([company_id, factory_id, product_id])
+  @@index([company_id, factory_id, updated_at])
+  @@index([company_id, product_id])
+}
+
+// ORDERS (factory-scoped; linked to global Client & catalog)
+//
+
+model Order {
+  id         String @id @default(cuid())
+  company_id String
+  factory_id String
+  client_id  String
+
+  // Billing / legal entity used for this sale
+  sales_company_id String?
+
+  // Optional logistics partner name
+  logistics String?
+
+  order_no String
+  status   OrderStatus @default(DRAFT)
+
+  order_date   DateTime  @default(now())
+  required_by  DateTime?
+  delivered_at DateTime?
+
+  // Summary fields (can be derived, but storing helps listing)
+  subtotal      Decimal @default(0) @db.Decimal(15, 2)
+  total_charges Decimal @default(0) @db.Decimal(15, 2)
+  total         Decimal @default(0) @db.Decimal(15, 2)
+
+  notes          String?
+  internal_notes String?
+
+  is_active Boolean @default(true) // soft delete (archived)
+
+  created_by String?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  company       Company       @relation(fields: [company_id], references: [id])
+  factory       Factory       @relation(fields: [factory_id], references: [id])
+  client        Client        @relation(fields: [client_id], references: [id])
+  sales_company SalesCompany? @relation(fields: [sales_company_id], references: [id])
+
+  items          OrderItem[]
+  charges        OrderCharge[]
+  status_history OrderStatusHistory[]
+  invoices       Invoice[]
+  payments       Payment[]
+  fulfillments   OrderFulfillment[]
+
+  @@unique([company_id, order_no])
+  @@index([company_id, factory_id, order_date])
+  @@index([company_id, factory_id, client_id, order_date])
+  @@index([company_id, status])
+  @@index([company_id, is_active, order_date])
+  @@index([company_id, is_active, status, order_date])
+  @@index([company_id, sales_company_id])
+}
+
+model OrderItem {
+  id         String @id @default(cuid())
+  company_id String
+  order_id   String
+  product_id String
+
+  quantity   Decimal  @db.Decimal(15, 2)
+  unit_price Decimal  @db.Decimal(15, 2)
+  discount   Decimal? @db.Decimal(15, 2) // item-level discount
+  line_total Decimal  @db.Decimal(15, 2)
+
+  remarks String?
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  order   Order   @relation(fields: [order_id], references: [id])
+  product Product @relation(fields: [product_id], references: [id])
+  company Company @relation(fields: [company_id], references: [id])
+
+  @@index([company_id, order_id])
+  @@index([company_id, product_id])
+}
+
+model OrderCharge {
+  id         String @id @default(cuid())
+  company_id String
+  order_id   String
+
+  type   ChargeType
+  title  String // "GST 5%", "Shipping", "Packing", "Custom Charge"
+  amount Decimal    @db.Decimal(15, 2)
+  meta   Json?
+
+  created_at DateTime @default(now())
+
+  order   Order   @relation(fields: [order_id], references: [id])
+  company Company @relation(fields: [company_id], references: [id])
+
+  @@index([company_id, order_id])
+}
+
+model OrderStatusHistory {
+  id         String      @id @default(cuid())
+  company_id String
+  order_id   String
+  status     OrderStatus
+  note       String?
+  meta       Json?
+
+  created_by String?
+  created_at DateTime @default(now())
+
+  order   Order   @relation(fields: [order_id], references: [id])
+  company Company @relation(fields: [company_id], references: [id])
+
+  @@index([company_id, order_id, created_at])
+}
+
+model OrderFulfillment {
+  id         String @id @default(cuid())
+  company_id String
+  order_id   String
+  factory_id String
+  product_id String
+
+  quantity  Decimal @db.Decimal(15, 2)
+  is_active Boolean @default(true)
+
+  created_by String?
+  created_at DateTime @default(now())
+
+  company Company @relation(fields: [company_id], references: [id])
+  order   Order   @relation(fields: [order_id], references: [id])
+  factory Factory @relation(fields: [factory_id], references: [id])
+  product Product @relation(fields: [product_id], references: [id])
+
+  @@index([company_id, order_id])
+  @@index([company_id, factory_id, created_at])
+  @@index([company_id, factory_id, is_active, order_id])
+  @@index([company_id, order_id, product_id])
+}
+
+//
+// INVOICES (factory-scoped, can be generated from orders)
+//
+
+model Invoice {
+  id         String @id @default(cuid())
+  company_id String
+  factory_id String
+  client_id  String
+
+  // Billing / legal entity used for this sale
+  sales_company_id String?
+
+  order_id   String? // generated from order if present
+  invoice_no String
+  kind       InvoiceKind @default(TAX_INVOICE)
+
+  // Default: pending (unpaid). Proforma invoices use DRAFT explicitly in code.
+  status InvoiceStatus @default(PENDING)
+
+  issue_date DateTime  @default(now())
+  due_date   DateTime?
+
+  subtotal      Decimal @default(0) @db.Decimal(15, 2)
+  total_charges Decimal @default(0) @db.Decimal(15, 2)
+  total         Decimal @default(0) @db.Decimal(15, 2)
+
+  notes     String?
+  is_active Boolean @default(true)
+
+  created_by String?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  company       Company       @relation(fields: [company_id], references: [id])
+  factory       Factory       @relation(fields: [factory_id], references: [id])
+  client        Client        @relation(fields: [client_id], references: [id])
+  order         Order?        @relation(fields: [order_id], references: [id])
+  sales_company SalesCompany? @relation(fields: [sales_company_id], references: [id])
+
+  items               InvoiceItem[]
+  charges             InvoiceCharge[]
+  status_history      InvoiceStatusHistory[]
+  allocations         PaymentAllocation[]
+  accounting_vouchers AccountingVoucher[]
+
+  @@unique([company_id, invoice_no])
+  @@unique([company_id, order_id])
+  @@index([company_id, factory_id, issue_date])
+  @@index([company_id, factory_id, client_id, issue_date])
+  @@index([company_id, status])
+  @@index([company_id, is_active, issue_date])
+  @@index([company_id, is_active, status, issue_date])
+  @@index([company_id, order_id])
+}
+
+model InvoiceItem {
+  id         String @id @default(cuid())
+  company_id String
+  invoice_id String
+  product_id String
+
+  quantity   Decimal  @db.Decimal(15, 2)
+  unit_price Decimal  @db.Decimal(15, 2)
+  discount   Decimal? @db.Decimal(15, 2)
+  line_total Decimal  @db.Decimal(15, 2)
+
+  remarks String?
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  invoice Invoice @relation(fields: [invoice_id], references: [id])
+  product Product @relation(fields: [product_id], references: [id])
+  company Company @relation(fields: [company_id], references: [id])
+
+  @@index([company_id, invoice_id])
+  @@index([company_id, product_id])
+}
+
+model InvoiceCharge {
+  id         String @id @default(cuid())
+  company_id String
+  invoice_id String
+
+  type   ChargeType
+  title  String
+  amount Decimal    @db.Decimal(15, 2)
+  meta   Json?
+
+  created_at DateTime @default(now())
+
+  invoice Invoice @relation(fields: [invoice_id], references: [id])
+  company Company @relation(fields: [company_id], references: [id])
+
+  @@index([company_id, invoice_id])
+}
+
+model InvoiceStatusHistory {
+  id         String        @id @default(cuid())
+  company_id String
+  invoice_id String
+  status     InvoiceStatus
+  note       String?
+  meta       Json?
+
+  created_by String?
+  created_at DateTime @default(now())
+
+  invoice Invoice @relation(fields: [invoice_id], references: [id])
+  company Company @relation(fields: [company_id], references: [id])
+
+  @@index([company_id, invoice_id, created_at])
+}
+
+//
+// PAYMENTS (append-only; partial payments supported by allocations)
+//
+
+model Payment {
+  id         String  @id @default(cuid())
+  company_id String
+  factory_id String? // payment can be recorded at factory-level; keep optional for flexibility
+  client_id  String
+
+  // Link payment to a specific order (in addition to invoice allocations)
+  order_id String?
+
+  // Billing / legal entity used for this sale
+  sales_company_id String?
+
+  payment_no String?
+  method     PaymentMethod
+  status     PaymentStatus @default(RECORDED)
+
+  amount  Decimal  @db.Decimal(15, 2)
+  paid_at DateTime @default(now())
+
+  reference String? // txn id / cheque no / etc
+  remarks   String?
+  meta      Json?
+
+  created_by String?
+  created_at DateTime @default(now())
+
+  company       Company       @relation(fields: [company_id], references: [id])
+  client        Client        @relation(fields: [client_id], references: [id])
+  factory       Factory?      @relation(fields: [factory_id], references: [id])
+  order         Order?        @relation(fields: [order_id], references: [id])
+  sales_company SalesCompany? @relation(fields: [sales_company_id], references: [id])
+
+  allocations PaymentAllocation[]
+
+  @@index([company_id, client_id, paid_at])
+  @@index([company_id, paid_at])
+  @@index([company_id, factory_id, paid_at])
+  @@index([company_id, order_id, paid_at])
+  @@index([company_id, sales_company_id])
+}
+
+model PaymentAllocation {
+  id         String @id @default(cuid())
+  company_id String
+  payment_id String
+  invoice_id String
+
+  amount Decimal @db.Decimal(15, 2)
+
+  is_active Boolean @default(true)
+
+  created_at DateTime @default(now())
+
+  company Company @relation(fields: [company_id], references: [id])
+  payment Payment @relation(fields: [payment_id], references: [id])
+  invoice Invoice @relation(fields: [invoice_id], references: [id])
+
+  @@unique([company_id, payment_id, invoice_id])
+  @@index([company_id, payment_id])
+  @@index([company_id, invoice_id])
+}
+
+//
+// PURCHASE ORDERS (company purchases: raw materials, machinery, etc.)
+//
+
+model Purchase {
+  id         String  @id @default(cuid())
+  company_id String
+  factory_id String
+  client_id  String?
+
+  purchase_no   String
+  status        PurchaseStatus @default(DRAFT)
+  purchase_date DateTime       @default(now())
+
+  vendor_name    String?
+  vendor_gstin   String?
+  vendor_phone   String?
+  vendor_email   String?
+  vendor_address String?
+
+  payment_method    PaymentMethod?
+  paid_amount       Decimal        @default(0) @db.Decimal(15, 2)
+  paid_at           DateTime?
+  payment_reference String?
+  payment_notes     String?
+
+  notes String?
+
+  subtotal Decimal @default(0) @db.Decimal(15, 2)
+  total    Decimal @default(0) @db.Decimal(15, 2)
+
+  is_active Boolean @default(true)
+
+  created_by String?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  company Company @relation(fields: [company_id], references: [id])
+  factory Factory @relation(fields: [factory_id], references: [id])
+  client  Client? @relation(fields: [client_id], references: [id])
+
+  items               PurchaseItem[]
+  charges             PurchaseCharge[]
+  timeline            PurchaseStatusHistory[]
+  payments            PurchasePayment[]
+  accounting_vouchers AccountingVoucher[]
+
+  @@unique([company_id, factory_id, purchase_no])
+  @@index([company_id, factory_id, status])
+  @@index([company_id, is_active, updated_at])
+  @@index([company_id, factory_id, purchase_date])
+  @@index([company_id, client_id, purchase_date])
+}
+
+model PurchasePayment {
+  id          String  @id @default(cuid())
+  company_id  String
+  purchase_id String
+  advance_id  String?
+
+  payment_no  String
+  status      PaymentStatus         @default(RECORDED)
+  source_kind PurchasePaymentSource @default(DIRECT)
+
+  amount    Decimal        @db.Decimal(15, 2)
+  paid_at   DateTime       @default(now())
+  method    PaymentMethod?
+  reference String?
+  notes     String?
+
+  reversed_at   DateTime?
+  reversed_by   String?
+  reversal_note String?
+
+  created_by String?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  company  Company          @relation(fields: [company_id], references: [id])
+  purchase Purchase         @relation(fields: [purchase_id], references: [id])
+  advance  PurchaseAdvance? @relation(fields: [advance_id], references: [id])
+
+  @@unique([company_id, payment_no])
+  @@index([company_id, purchase_id, paid_at])
+  @@index([company_id, status, paid_at])
+  @@index([company_id, advance_id])
+}
+
+model PurchaseAdvance {
+  id         String  @id @default(cuid())
+  company_id String
+  client_id  String
+  factory_id String?
+
+  advance_no String
+  side       AdvanceSide   @default(PURCHASE)
+  status     PaymentStatus @default(RECORDED)
+
+  amount           Decimal        @db.Decimal(15, 2)
+  remaining_amount Decimal        @db.Decimal(15, 2)
+  paid_at          DateTime       @default(now())
+  method           PaymentMethod?
+  reference        String?
+  notes            String?
+
+  reversed_at   DateTime?
+  reversed_by   String?
+  reversal_note String?
+
+  created_by String?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  company  Company           @relation(fields: [company_id], references: [id])
+  client   Client            @relation(fields: [client_id], references: [id])
+  factory  Factory?          @relation(fields: [factory_id], references: [id])
+  payments PurchasePayment[]
+
+  @@unique([company_id, advance_no])
+  @@index([company_id, client_id, status, paid_at])
+  @@index([company_id, factory_id, paid_at])
+}
+
+model PurchaseItem {
+  id          String @id @default(cuid())
+  company_id  String
+  purchase_id String
+
+  description String
+  quantity    Decimal @db.Decimal(15, 2)
+  unit_price  Decimal @db.Decimal(15, 2)
+  line_total  Decimal @db.Decimal(15, 2)
+
+  created_at DateTime @default(now())
+
+  company  Company  @relation(fields: [company_id], references: [id])
+  purchase Purchase @relation(fields: [purchase_id], references: [id])
+
+  @@index([company_id, purchase_id])
+}
+
+model PurchaseCharge {
+  id          String @id @default(cuid())
+  company_id  String
+  purchase_id String
+
+  label  String
+  amount Decimal @db.Decimal(15, 2)
+
+  created_at DateTime @default(now())
+
+  company  Company  @relation(fields: [company_id], references: [id])
+  purchase Purchase @relation(fields: [purchase_id], references: [id])
+
+  @@index([company_id, purchase_id])
+}
+
+model PurchaseStatusHistory {
+  id          String         @id @default(cuid())
+  company_id  String
+  purchase_id String
+  status      PurchaseStatus
+  note        String?
+
+  created_by String?
+  created_at DateTime @default(now())
+
+  company  Company  @relation(fields: [company_id], references: [id])
+  purchase Purchase @relation(fields: [purchase_id], references: [id])
+
+  @@index([company_id, purchase_id])
+  @@index([company_id, status])
+}
+
+//
+// ACCOUNTING / LEDGER
+//
+
+model AccountingVoucher {
+  id          String  @id @default(cuid())
+  company_id  String
+  factory_id  String?
+  client_id   String?
+  purchase_id String?
+  invoice_id  String?
+
+  voucher_no    String
+  voucher_type  AccountingVoucherType
+  business_side BusinessSide?
+  voucher_date  DateTime              @default(now())
+  narration     String?
+  particulars   String?
+
+  total_amount Decimal @default(0) @db.Decimal(15, 2)
+  total_debit  Decimal @default(0) @db.Decimal(15, 2)
+  total_credit Decimal @default(0) @db.Decimal(15, 2)
+
+  is_active Boolean @default(true)
+
+  created_by String?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  company  Company   @relation(fields: [company_id], references: [id])
+  factory  Factory?  @relation(fields: [factory_id], references: [id])
+  client   Client?   @relation("AccountingVoucherClient", fields: [client_id], references: [id])
+  purchase Purchase? @relation(fields: [purchase_id], references: [id])
+  invoice  Invoice?  @relation(fields: [invoice_id], references: [id])
+
+  lines AccountingVoucherLine[]
+
+  @@unique([company_id, voucher_no])
+  @@index([company_id, voucher_type, voucher_date])
+  @@index([company_id, client_id, voucher_date])
+  @@index([company_id, purchase_id])
+  @@index([company_id, invoice_id])
+}
+
+model AccountingVoucherLine {
+  id         String  @id @default(cuid())
+  company_id String
+  voucher_id String
+  client_id  String?
+  product_id String?
+
+  entry_type   BalanceSide
+  account_name String
+  description  String?
+  quantity     Decimal?    @db.Decimal(15, 2)
+  unit_price   Decimal?    @db.Decimal(15, 2)
+  amount       Decimal     @db.Decimal(15, 2)
+  remarks      String?
+  sort_order   Int         @default(0)
+
+  created_at DateTime @default(now())
+
+  company Company           @relation(fields: [company_id], references: [id])
+  voucher AccountingVoucher @relation(fields: [voucher_id], references: [id])
+  client  Client?           @relation("AccountingLineClient", fields: [client_id], references: [id])
+  product Product?          @relation(fields: [product_id], references: [id])
+
+  @@index([company_id, voucher_id, sort_order])
+  @@index([company_id, client_id, created_at])
+  @@index([company_id, product_id, created_at])
+}
+
+//
+// COMPLIANCE REPORTS (company-level, optionally factory-tagged)
+//
+
+model ComplianceReport {
+  id         String    @id @default(cuid())
+  company_id String
+  factory_id String? // some certifications might be factory-specific
+  title      String
+  authority  String? // government/agency name
+  valid_from DateTime?
+  valid_to   DateTime?
+  tags       String? // simple comma tags for filtering
+  file_url   String // stored path / CDN url
+  remarks    String?
+
+  is_active Boolean @default(true)
+
+  created_by String?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  company Company @relation(fields: [company_id], references: [id])
+
+  @@index([company_id, factory_id, valid_to])
+  @@index([company_id, is_active])
+}
+
+//
+// MESSAGING (Email + WhatsApp via providers like Brevo + Meta)
+//
+
+model MessageTemplate {
+  id         String @id @default(cuid())
+  company_id String
+
+  name    String
+  channel MessageChannel
+  subject String? // email only
+  body    String // templated content (handle merge tags in code)
+  meta    Json?
+
+  is_active Boolean @default(true)
+
+  created_by String?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  company         Company           @relation(fields: [company_id], references: [id])
+  MessageCampaign MessageCampaign[]
+
+  @@unique([company_id, name, channel])
+  @@index([company_id, is_active])
+}
+
+model MessageCampaign {
+  id         String         @id @default(cuid())
+  company_id String
+  factory_id String? // optional: campaign scoped to a factory view
+  channel    MessageChannel
+
+  name        String
+  template_id String?
+  purpose     String? // marketing / reminder / transactional / etc
+  meta        Json?
+
+  created_by String?
+  created_at DateTime @default(now())
+
+  company  Company          @relation(fields: [company_id], references: [id])
+  template MessageTemplate? @relation(fields: [template_id], references: [id])
+
+  recipients    MessageRecipient[]
+  logs          MessageLog[]
+  dispatch_jobs MessageDispatchJob[]
+
+  @@index([company_id, factory_id, created_at])
+  @@index([company_id, channel])
+}
+
+model MessageRecipient {
+  id          String @id @default(cuid())
+  company_id  String
+  campaign_id String
+
+  client_id  String?
+  contact_id String?
+
+  to_email String?
+  to_phone String? // whatsapp
+
+  payload    Json? // resolved merge variables snapshot (append-only trace)
+  created_at DateTime @default(now())
+
+  company  Company         @relation(fields: [company_id], references: [id])
+  campaign MessageCampaign @relation(fields: [campaign_id], references: [id])
+
+  @@index([company_id, campaign_id])
+}
+
+model MessageLog {
+  id          String         @id @default(cuid())
+  company_id  String
+  campaign_id String?
+  channel     MessageChannel
+
+  // Links for traceability from anywhere (orders/invoices/etc)
+  factory_id String?
+  client_id  String?
+  order_id   String?
+  invoice_id String?
+
+  to          String
+  provider    String? // "brevo", "meta", etc
+  provider_id String? // message id
+  status      MessageStatus @default(QUEUED)
+  error       String?
+
+  payload    Json?
+  created_by String?
+  created_at DateTime @default(now())
+
+  company           Company          @relation(fields: [company_id], references: [id])
+  MessageCampaign   MessageCampaign? @relation(fields: [messageCampaignId], references: [id])
+  messageCampaignId String?
+
+  @@index([company_id, channel, created_at])
+  @@index([company_id, status, created_at])
+  @@index([company_id, client_id, created_at])
+  @@index([company_id, order_id])
+  @@index([company_id, invoice_id])
+}
+
+// ------------------------------------------------------------
+model MessageDispatchJob {
+  id          String            @id @default(cuid())
+  company_id  String
+  campaign_id String
+  status      DispatchJobStatus @default(QUEUED)
+
+  created_by  String?
+  created_at  DateTime  @default(now())
+  started_at  DateTime?
+  finished_at DateTime?
+
+  total_recipients Int @default(0)
+  processed_count  Int @default(0)
+  sent_count       Int @default(0)
+  failed_count     Int @default(0)
+
+  error String?
+
+  company  Company         @relation(fields: [company_id], references: [id])
+  campaign MessageCampaign @relation(fields: [campaign_id], references: [id])
+
+  @@index([company_id, status, created_at])
+  @@index([company_id, campaign_id, created_at])
+}
+
+// Internal realtime messaging (Socket.IO) + REST initial load
+// ------------------------------------------------------------
+
+enum ConversationType {
+  DIRECT
+}
+
+model Conversation {
+  id         String           @id @default(cuid())
+  company_id String
+  type       ConversationType @default(DIRECT)
+
+  // Prevent duplicate 1:1 conversations.
+  // For DIRECT: direct_key = "<minUserId>:<maxUserId>"
+  direct_key String?
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  company  Company              @relation(fields: [company_id], references: [id])
+  members  ConversationMember[]
+  messages ChatMessage[]
+
+  @@unique([company_id, direct_key])
+  @@index([company_id, created_at])
+  @@index([company_id, updated_at])
+}
+
+model ConversationMember {
+  id              String @id @default(cuid())
+  company_id      String
+  conversation_id String
+  user_id         String
+
+  last_read_at DateTime?
+
+  created_at DateTime @default(now())
+
+  company      Company      @relation(fields: [company_id], references: [id])
+  conversation Conversation @relation(fields: [conversation_id], references: [id])
+  user         User         @relation(fields: [user_id], references: [id])
+
+  @@unique([conversation_id, user_id])
+  @@index([company_id, user_id])
+  @@index([company_id, conversation_id])
+}
+
+model ChatMessage {
+  id              String @id @default(cuid())
+  company_id      String
+  conversation_id String
+  sender_id       String
+  body            String
+
+  created_at DateTime @default(now())
+
+  company      Company      @relation(fields: [company_id], references: [id])
+  conversation Conversation @relation(fields: [conversation_id], references: [id])
+  sender       User         @relation("ChatMessageSender", fields: [sender_id], references: [id])
+
+  @@index([company_id, created_at])
+  @@index([conversation_id, created_at])
+}
+
+enum BroadcastTargetType {
+  ALL
+  ROLES
+  USERS
+}
+
+model BroadcastMessage {
+  id          String              @id @default(cuid())
+  company_id  String
+  sender_id   String
+  body        String
+  target_type BroadcastTargetType
+
+  // Snapshot of target ids used at send-time
+  target_role_ids String[] @default([])
+  target_user_ids String[] @default([])
+
+  created_at DateTime @default(now())
+
+  company    Company              @relation(fields: [company_id], references: [id])
+  sender     User                 @relation("BroadcastSender", fields: [sender_id], references: [id])
+  recipients BroadcastRecipient[]
+
+  @@index([company_id, created_at])
+}
+
+model BroadcastRecipient {
+  id           String @id @default(cuid())
+  company_id   String
+  broadcast_id String
+  user_id      String
+
+  seen_at    DateTime?
+  created_at DateTime  @default(now())
+
+  company   Company          @relation(fields: [company_id], references: [id])
+  broadcast BroadcastMessage @relation(fields: [broadcast_id], references: [id])
+  user      User             @relation(fields: [user_id], references: [id])
+
+  @@unique([broadcast_id, user_id])
+  @@index([company_id, created_at])
+  @@index([user_id, seen_at])
+  @@index([company_id, broadcast_id])
+}
+
+model CompanyPlatformConfig {
+  id                      String    @id @default(cuid())
+  company_id              String    @unique
+  tenant_slug             String?   @unique
+  app_title               String?
+  theme_color             String?
+  logo_url                String?
+  locale                  String?
+  timezone                String?
+  invoice_header          String?
+  invoice_footer          String?
+  plan_code               String?
+  billing_cycle           String?
+  subscription_status     String?
+  trial_ends_at           DateTime?
+  active_until            DateTime?
+  platform_last_synced_at DateTime?
+  created_at              DateTime  @default(now())
+  updated_at              DateTime  @updatedAt
+
+  company Company @relation(fields: [company_id], references: [id], onDelete: Cascade)
+
+  @@index([subscription_status])
+}

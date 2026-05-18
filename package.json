@@ -1,0 +1,38 @@
+{
+  "name": "unitflow-core-api",
+  "version": "2.1.0",
+  "description": "UnitFlow core API powered by the upgraded Babanamak ERP runtime.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "smoke:test": "node scripts/smoke-test.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate deploy",
+    "verify:e2e": "node scripts/verify_auth_inventory_orders.js"
+  },
+  "keywords": [],
+  "author": "Sync Spectrum Technologies",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@prisma/client": "^6.11.1",
+    "axios": "^1.13.4",
+    "bcrypt": "^6.0.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "pdfkit": "^0.17.2",
+    "prisma": "^6.11.1",
+    "socket.io": "^4.8.1",
+    "@socket.io/redis-adapter": "^8.3.0",
+    "redis": "^4.7.0",
+    "rate-limit-redis": "^4.2.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.11"
+  }
+}

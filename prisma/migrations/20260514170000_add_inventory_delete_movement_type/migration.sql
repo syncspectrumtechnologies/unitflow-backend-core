@@ -1,0 +1,1 @@
+ALTER TYPE "InventoryMovementType" ADD VALUE IF NOT EXISTS 'DELETE';
