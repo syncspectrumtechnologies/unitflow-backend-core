@@ -1,6 +1,6 @@
 const prisma = require("../config/db");
 const { getIO } = require("../sockets/socketServer");
-const { Prisma } = require("@prisma/client");
+const { Prisma } = require("../generated/prisma");
 
 function safeBody(body) {
   const s = (body ?? "").toString().trim();

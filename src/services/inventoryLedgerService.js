@@ -1,4 +1,4 @@
-const { Prisma } = require("@prisma/client");
+const { Prisma } = require("../generated/prisma");
 
 function toNumber(value) {
   const n = typeof value === "string" ? Number(value) : Number(value);

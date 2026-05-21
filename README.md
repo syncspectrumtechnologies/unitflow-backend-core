@@ -21,3 +21,8 @@ npm run prisma:generate
 npm run prisma:migrate
 npm start
 ```
+
+## Azure Deployment Notes
+
+- Set app settings in Azure App Service for `DATABASE_URL`, `JWT_SECRET`, `PLATFORM_INTERNAL_API_KEY`, `PLATFORM_RUNTIME_JWT_SECRET`, and `PLATFORM_API_BASE_URL`.
+- Prisma client generation now runs during install, before `npm start`, and again at boot if the generated client is missing from the deployment artifact.
