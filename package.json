@@ -10,7 +10,7 @@
     "postinstall": "node scripts/prisma-generate.js",
     "smoke:test": "node scripts/smoke-test.js",
     "prisma:generate": "node scripts/prisma-generate.js",
-    "prisma:migrate": "prisma migrate deploy",
+    "prisma:migrate": "node scripts/prisma-migrate-deploy.js",
     "verify:e2e": "node scripts/verify_auth_inventory_orders.js"
   },
   "keywords": [],

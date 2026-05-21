@@ -4,22 +4,21 @@ const { spawnSync } = require("child_process");
 
 const repoRoot = path.resolve(__dirname, "..");
 const prismaCliJs = path.join(repoRoot, "node_modules", "prisma", "build", "index.js");
-const env = { ...process.env };
 
-if (!env.DATABASE_URL) {
-  // Prisma generate only needs a syntactically valid URL while building the client.
-  env.DATABASE_URL = "postgresql://prisma:prisma@localhost:5432/unitflow";
+if (!process.env.DATABASE_URL) {
+  console.error("DATABASE_URL is required for prisma migrate deploy");
+  process.exit(1);
 }
 
 const result = fs.existsSync(prismaCliJs)
-  ? spawnSync(process.execPath, [prismaCliJs, "generate"], {
+  ? spawnSync(process.execPath, [prismaCliJs, "migrate", "deploy"], {
       cwd: repoRoot,
-      env,
+      env: process.env,
       stdio: "inherit"
     })
-  : spawnSync(process.platform === "win32" ? "npx.cmd" : "npx", ["prisma", "generate"], {
+  : spawnSync(process.platform === "win32" ? "npx.cmd" : "npx", ["prisma", "migrate", "deploy"], {
       cwd: repoRoot,
-      env,
+      env: process.env,
       stdio: "inherit"
     });
 
