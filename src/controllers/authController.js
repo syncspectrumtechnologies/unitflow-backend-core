@@ -129,7 +129,7 @@ exports.me = async (req, res) => {
 exports.refresh = async (req, res) => {
   try {
     if (!req.auth?.user) {
-      return res.status(401).json({ message: "Authentication required" });
+      return res.status(401).json({ message: "Authentication required", code: "AUTH_LOGIN_REQUIRED", login_required: true });
     }
 
     if (req.auth.token_source !== "core") {
@@ -140,7 +140,7 @@ exports.refresh = async (req, res) => {
 
     const refreshed = req.auth.refreshed_token || await refreshCoreSessionAuth(req.auth, { force: true });
     if (!refreshed) {
-      return res.status(401).json({ message: "Session is no longer active" });
+      return res.status(401).json({ message: "Session is no longer active", code: "AUTH_TOKEN_EXPIRED", login_required: true });
     }
 
     res.setHeader("Authorization", "Bearer " + refreshed.token);

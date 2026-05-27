@@ -1,3 +1,4 @@
+const jwt = require("jsonwebtoken");
 const { authenticateRequestToken } = require("../services/authSessionService");
 
 function applyRefreshHeaders(res, refreshedToken) {
@@ -12,9 +13,17 @@ function applyRefreshHeaders(res, refreshedToken) {
 module.exports = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
+    const unauthorized = (message, code = "AUTH_LOGIN_REQUIRED") => {
+      res.setHeader("X-Login-Required", "true");
+      return res.status(401).json({
+        message,
+        code,
+        login_required: true
+      });
+    };
 
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return res.status(401).json({ message: "Unauthorized" });
+      return unauthorized("Unauthorized");
     }
 
     const token = authHeader.split(" ")[1];
@@ -22,7 +31,11 @@ module.exports = async (req, res, next) => {
     const user = auth?.user;
 
     if (!user) {
-      return res.status(401).json({ message: "Invalid or inactive user" });
+      const decoded = jwt.decode(token) || {};
+      if (decoded?.exp && Number(decoded.exp) <= Math.floor(Date.now() / 1000)) {
+        return unauthorized("Session has expired", "AUTH_TOKEN_EXPIRED");
+      }
+      return unauthorized("Invalid or inactive user", "AUTH_SESSION_INVALID");
     }
 
     req.auth = auth;
@@ -31,6 +44,19 @@ module.exports = async (req, res, next) => {
     applyRefreshHeaders(res, auth?.refreshed_token);
     next();
   } catch (err) {
-    return res.status(401).json({ message: "Authentication failed" });
+    if (err?.name === "TokenExpiredError") {
+      res.setHeader("X-Login-Required", "true");
+      return res.status(401).json({
+        message: "Session has expired",
+        code: "AUTH_TOKEN_EXPIRED",
+        login_required: true
+      });
+    }
+    res.setHeader("X-Login-Required", "true");
+    return res.status(401).json({
+      message: "Authentication failed",
+      code: "AUTH_LOGIN_REQUIRED",
+      login_required: true
+    });
   }
 };

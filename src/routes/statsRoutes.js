@@ -13,12 +13,10 @@ router.get(
   permissionMiddleware(["stats.view"]),
   statsController.getCompanyStats
 );
-
-module.exports = router;
-
-
 router.delete(
   "/",
   permissionMiddleware(["stats.delete"]),
   statsController.deleteStats
 );
+
+module.exports = router;
