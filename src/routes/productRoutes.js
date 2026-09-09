@@ -30,6 +30,13 @@ router.get(
   productController.getProducts
 );
 
+// Bulk CSV import
+router.post(
+  "/import",
+  permissionMiddleware(["products.create"]),
+  productController.importProductsCsv
+);
+
 // Detail
 router.get(
   "/:id",

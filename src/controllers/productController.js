@@ -18,6 +18,264 @@ function toPriceOrUndefined(v) {
   return n;
 }
 
+const IMPORT_ROW_LIMIT = 500;
+const IMPORT_TEXT_LIMIT = 1_000_000;
+const HEADER_ALIASES = {
+  product_name: "name",
+  item_name: "name",
+  category: "category_name",
+  category_id: "category_id",
+  uom: "unit",
+  selling_price: "price",
+  mrp: "price",
+  pack: "pack_size",
+  packsize: "pack_size",
+  active: "is_active"
+};
+
+function normalizeHeader(value) {
+  const key = String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+  return HEADER_ALIASES[key] || key;
+}
+
+function parseCsvText(text) {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let quoted = false;
+  const source = String(text || "").replace(/^\uFEFF/, "");
+
+  for (let i = 0; i < source.length; i += 1) {
+    const char = source[i];
+    if (char === '"') {
+      if (quoted && source[i + 1] === '"') {
+        cell += '"';
+        i += 1;
+      } else {
+        quoted = !quoted;
+      }
+      continue;
+    }
+    if (!quoted && char === ",") {
+      row.push(cell);
+      cell = "";
+      continue;
+    }
+    if (!quoted && (char === "\n" || char === "\r")) {
+      if (char === "\r" && source[i + 1] === "\n") i += 1;
+      row.push(cell);
+      if (row.some((item) => String(item || "").trim() !== "")) rows.push(row);
+      row = [];
+      cell = "";
+      continue;
+    }
+    cell += char;
+  }
+
+  row.push(cell);
+  if (row.some((item) => String(item || "").trim() !== "")) rows.push(row);
+  if (quoted) {
+    const err = new Error("CSV has an unclosed quoted cell");
+    err.statusCode = 400;
+    throw err;
+  }
+  return rows;
+}
+
+function csvRowsToObjects(csvText) {
+  const rows = parseCsvText(csvText);
+  if (rows.length < 2) return [];
+  const headers = rows[0].map(normalizeHeader);
+  return rows.slice(1).map((cells, index) => {
+    const item = { row_number: index + 2 };
+    headers.forEach((header, cellIndex) => {
+      if (header) item[header] = String(cells[cellIndex] || "").trim();
+    });
+    return item;
+  });
+}
+
+function productImportKey(name, packSize) {
+  return `${String(name || "").trim().toLowerCase()}::${String(packSize || "").trim().toLowerCase()}`;
+}
+
+function parseOptionalBoolean(value) {
+  const text = String(value ?? "").trim().toLowerCase();
+  if (!text) return undefined;
+  if (["true", "yes", "y", "1", "active"].includes(text)) return true;
+  if (["false", "no", "n", "0", "inactive"].includes(text)) return false;
+  return null;
+}
+
+function normalizeImportText(value, max = 160) {
+  const text = String(value ?? "").trim();
+  return text ? text.slice(0, max) : null;
+}
+
+exports.importProductsCsv = async (req, res) => {
+  try {
+    const company_id = req.user.company_id;
+    const {
+      csv_text,
+      dry_run = false,
+      update_existing = true,
+      create_missing_categories = true
+    } = req.body || {};
+
+    const csvText = String(csv_text || "");
+    if (!csvText.trim()) return res.status(400).json({ message: "csv_text is required" });
+    if (csvText.length > IMPORT_TEXT_LIMIT) return res.status(413).json({ message: "CSV file is too large" });
+
+    const rawRows = csvRowsToObjects(csvText);
+    if (rawRows.length === 0) return res.status(400).json({ message: "CSV must include a header and at least one row" });
+    if (rawRows.length > IMPORT_ROW_LIMIT) return res.status(400).json({ message: `Import supports up to ${IMPORT_ROW_LIMIT} rows at a time` });
+
+    const categories = await prisma.productCategory.findMany({
+      where: { company_id, is_active: true },
+      select: { id: true, name: true }
+    });
+    const categoriesById = new Map(categories.map((category) => [category.id, category]));
+    const categoriesByName = new Map(categories.map((category) => [category.name.toLowerCase(), category]));
+    const seen = new Set();
+    const errors = [];
+    const normalizedRows = [];
+    const missingCategoryNames = new Set();
+
+    rawRows.forEach((row) => {
+      const name = normalizeImportText(row.name || row.product, 220);
+      const sku = normalizeImportText(row.sku, 80);
+      const categoryId = normalizeImportText(row.category_id, 80);
+      const categoryName = normalizeImportText(row.category_name, 160);
+      const unit = normalizeImportText(row.unit, 40);
+      const packSize = normalizeImportText(row.pack_size, 80);
+      const description = normalizeImportText(row.description, 800);
+      const price = toPriceOrUndefined(row.price);
+      const isActive = parseOptionalBoolean(row.is_active);
+      const key = productImportKey(name, packSize);
+      let resolvedCategoryId = categoryId || null;
+
+      if (!name) errors.push({ row_number: row.row_number, message: "name is required" });
+      if (!unit) errors.push({ row_number: row.row_number, message: "unit is required" });
+      if (Number.isNaN(price) || price < 0) errors.push({ row_number: row.row_number, message: "price must be zero or more" });
+      if (isActive === null) errors.push({ row_number: row.row_number, message: "is_active must be true or false" });
+      if (seen.has(key)) errors.push({ row_number: row.row_number, message: "duplicate product name and pack size in this CSV" });
+      seen.add(key);
+
+      if (resolvedCategoryId && !categoriesById.has(resolvedCategoryId)) {
+        errors.push({ row_number: row.row_number, message: "category_id was not found" });
+      } else if (!resolvedCategoryId) {
+        const category = categoryName ? categoriesByName.get(categoryName.toLowerCase()) : null;
+        if (category) resolvedCategoryId = category.id;
+        else if (categoryName && create_missing_categories) missingCategoryNames.add(categoryName);
+        else errors.push({ row_number: row.row_number, message: "category_name or category_id is required" });
+      }
+
+      normalizedRows.push({
+        row_number: row.row_number,
+        name,
+        sku,
+        category_id: resolvedCategoryId,
+        category_name: categoryName,
+        unit,
+        pack_size: packSize,
+        price: price === undefined ? 0 : price,
+        description,
+        is_active: isActive === undefined ? true : isActive
+      });
+    });
+
+    if (errors.length) {
+      return res.status(422).json({ ok: false, message: "CSV has validation errors", errors });
+    }
+
+    if (dry_run) {
+      return res.json({
+        ok: true,
+        dry_run: true,
+        summary: {
+          valid_rows: normalizedRows.length,
+          categories_to_create: missingCategoryNames.size,
+          update_existing: Boolean(update_existing)
+        }
+      });
+    }
+
+    const summary = await prisma.$transaction(async (tx) => {
+      const categoryMap = new Map(categoriesByName);
+      let categoriesCreated = 0;
+      for (const categoryName of missingCategoryNames) {
+        const category = await tx.productCategory.upsert({
+          where: { company_id_name: { company_id, name: categoryName } },
+          update: { is_active: true },
+          create: { company_id, name: categoryName, is_active: true },
+          select: { id: true, name: true }
+        });
+        categoryMap.set(category.name.toLowerCase(), category);
+        categoriesCreated += 1;
+      }
+
+      let created = 0;
+      let updated = 0;
+      let skipped = 0;
+      for (const row of normalizedRows) {
+        const category = row.category_id ? { id: row.category_id } : categoryMap.get(String(row.category_name || "").toLowerCase());
+        const existing = await tx.product.findFirst({
+          where: { company_id, name: row.name, pack_size: row.pack_size }
+        });
+
+        if (existing) {
+          if (!update_existing) {
+            skipped += 1;
+            continue;
+          }
+          await tx.product.update({
+            where: { id: existing.id },
+            data: {
+              category_id: category.id,
+              sku: row.sku,
+              unit: row.unit,
+              price: row.price,
+              description: row.description,
+              is_active: row.is_active
+            }
+          });
+          updated += 1;
+        } else {
+          await tx.product.create({
+            data: {
+              company_id,
+              category_id: category.id,
+              name: row.name,
+              sku: row.sku,
+              unit: row.unit,
+              pack_size: row.pack_size,
+              price: row.price,
+              description: row.description,
+              is_active: row.is_active
+            }
+          });
+          created += 1;
+        }
+      }
+
+      return { rows: normalizedRows.length, created, updated, skipped, categories_created: categoriesCreated };
+    });
+
+    await logActivity({
+      company_id,
+      user_id: req.user.id,
+      action: "PRODUCTS_IMPORTED",
+      entity_type: "product_import",
+      meta: { summary }
+    });
+
+    return res.json({ ok: true, summary });
+  } catch (err) {
+    console.error("importProductsCsv error:", err);
+    return res.status(err.statusCode || 500).json({ message: err.message || "Internal server error" });
+  }
+};
+
 exports.createProduct = async (req, res) => {
   try {
     const company_id = req.user.company_id;

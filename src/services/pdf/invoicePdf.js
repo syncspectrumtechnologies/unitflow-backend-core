@@ -3,11 +3,65 @@ const fs = require("fs");
 const path = require("path");
 const prisma = require("../../config/db");
 
-const THEME = (process.env.PDF_THEME_COLOR || "#5d309d  ").trim();
+const THEME = (process.env.PDF_THEME_COLOR || "#0f766e").trim();
+
+function normalizeThemeColor(value) {
+  const candidate = String(value || "").trim();
+  return /^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})$/.test(candidate) ? candidate : THEME;
+}
+
+function getInvoiceBranding(inv = {}) {
+  const config = inv.company?.platform_config || {};
+  const salesCompany = inv.sales_company || {};
+  const company = inv.company || {};
+  return {
+    themeColor: normalizeThemeColor(config.theme_color),
+    logoUrl: config.logo_url || null,
+    appTitle: config.app_title || salesCompany.name || company.name || "UNITFLOW",
+    invoiceHeader: config.invoice_header || salesCompany.legal_name || salesCompany.name || company.legal_name || company.name || "",
+    invoiceFooter: config.invoice_footer || "This is a system-generated document."
+  };
+}
 
 function resolveLogoPath() {
   const p = process.env.INVOICE_LOGO_PATH || "src/assets/logo.png";
   return path.isAbsolute(p) ? p : path.join(process.cwd(), p);
+}
+
+function localLogoSource() {
+  const logoPath = resolveLogoPath();
+  return fs.existsSync(logoPath) ? logoPath : null;
+}
+
+async function resolveLogoSource(logoUrl) {
+  const fallback = localLogoSource();
+  const value = String(logoUrl || "").trim();
+  if (!value) return fallback;
+
+  const dataUrl = value.match(/^data:image\/(png|jpeg|jpg);base64,([A-Za-z0-9+/=]+)$/);
+  if (dataUrl) {
+    const buffer = Buffer.from(dataUrl[2], "base64");
+    return buffer.length <= 1024 * 1024 ? buffer : fallback;
+  }
+
+  if (/^https?:\/\//i.test(value) && typeof fetch === "function") {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2500);
+    try {
+      const res = await fetch(value, { signal: controller.signal });
+      const type = String(res.headers.get("content-type") || "").toLowerCase();
+      if (!res.ok || !/^image\/(png|jpe?g)/.test(type)) return fallback;
+      const arrayBuffer = await res.arrayBuffer();
+      if (arrayBuffer.byteLength > 1024 * 1024) return fallback;
+      return Buffer.from(arrayBuffer);
+    } catch {
+      return fallback;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  return fallback;
 }
 
 async function fetchInvoice(company_id, factory_id, invoiceId) {
@@ -18,7 +72,7 @@ async function fetchInvoice(company_id, factory_id, invoiceId) {
       items: { include: { product: { include: { category: true } } } },
       charges: true,
       factory: true,
-      company: true,
+      company: { include: { platform_config: true } },
       sales_company: true
     }
   });
@@ -66,7 +120,8 @@ function drawWatermark(doc, text) {
   doc.restore();
 }
 
-function drawHeader(doc, inv) {
+function drawHeader(doc, inv, assets = {}) {
+  const branding = getInvoiceBranding(inv);
   const pageWidth = doc.page.width;
   const left = doc.page.margins.left;
   const right = doc.page.margins.right;
@@ -79,7 +134,7 @@ function drawHeader(doc, inv) {
 
   // Draw header strip
   doc.save();
-  doc.rect(0, 0, pageWidth, headerH).fill(THEME);
+  doc.rect(0, 0, pageWidth, headerH).fill(branding.themeColor);
   doc.restore();
 
   // Logo card (square to match logo)
@@ -89,22 +144,21 @@ function drawHeader(doc, inv) {
   const logoBoxY = (headerH - logoBoxH) / 2;
 
   doc.save();
-  doc.roundedRect(logoBoxX, logoBoxY, logoBoxW, logoBoxH, 8).fill("#5d309d  ");
+  doc.roundedRect(logoBoxX, logoBoxY, logoBoxW, logoBoxH, 8).fill("#ffffff");
   doc.restore();
 
-  const logoPath = resolveLogoPath();
   try {
-    if (fs.existsSync(logoPath)) {
-      doc.image(logoPath, logoBoxX + 4, logoBoxY + 4, {
+    if (assets.logoSource) {
+      doc.image(assets.logoSource, logoBoxX + 4, logoBoxY + 4, {
         fit: [logoBoxW - 8, logoBoxH - 8],
         align: "center",
         valign: "center"
       });
     } else {
-      doc.fillColor(THEME).font("Helvetica-Bold").fontSize(12).text("BABANAMAK", logoBoxX + 10, logoBoxY + 14);
+      doc.fillColor(branding.themeColor).font("Helvetica-Bold").fontSize(12).text(String(branding.appTitle).toUpperCase().slice(0, 18), logoBoxX + 10, logoBoxY + 14);
     }
   } catch (e) {
-    doc.fillColor(THEME).font("Helvetica-Bold").fontSize(12).text("BABANAMAK", logoBoxX + 10, logoBoxY + 14);
+    doc.fillColor(branding.themeColor).font("Helvetica-Bold").fontSize(12).text(String(branding.appTitle).toUpperCase().slice(0, 18), logoBoxX + 10, logoBoxY + 14);
   }
 
   // Right column area (everything must fit inside headerH)
@@ -119,6 +173,12 @@ function drawHeader(doc, inv) {
     padY,
     { width: rightColW, align: "right" }
   );
+  if (branding.invoiceHeader) {
+    doc.font("Helvetica").fontSize(9).fillColor("#f8fafc").text(branding.invoiceHeader, rightColX, padY + 25, {
+      width: rightColW,
+      align: "right"
+    });
+  }
 
   // Meta lines - constrained to header, smaller font, tighter leading
   doc.font("Helvetica").fontSize(10).fillColor("#eaf6fb");
@@ -136,7 +196,7 @@ function drawHeader(doc, inv) {
 
   // Place meta from bottom up so it never overflows header strip
   const metaLineH = 12;
-  const maxLines = Math.floor((headerH - 34) / metaLineH); // reserve for title
+  const maxLines = Math.floor((headerH - 50) / metaLineH); // reserve for title + invoice header
   const safeMeta = metaLines.slice(0, maxLines);
 
   // Align meta block to bottom of header strip
@@ -204,6 +264,7 @@ function buildSalesCompanyInvoiceLines(company) {
 }
 
 function drawCompanyAndClientBlocks(doc, inv) {
+  const branding = getInvoiceBranding(inv);
   // Prefer the order/invoice-level sales company (legal entity) when present.
   const company = inv.sales_company || inv.company || {};
   const client = inv.client || {};
@@ -222,7 +283,7 @@ function drawCompanyAndClientBlocks(doc, inv) {
   const labelGap = 4;
   const nameGap = 6;
 
-  const companyName = safeText(company.name || company.legal_name || "Babanamak");
+  const companyName = safeText(company.name || company.legal_name || "UnitFlow");
   const clientName = safeText(client.company_name || "Client Name");
 
   const fromLines = buildSalesCompanyInvoiceLines(company);
@@ -258,7 +319,7 @@ function drawCompanyAndClientBlocks(doc, inv) {
   doc.restore();
 
   let y = topY + padTop;
-  doc.fillColor(THEME).font("Helvetica-Bold").fontSize(11);
+  doc.fillColor(branding.themeColor).font("Helvetica-Bold").fontSize(11);
   doc.text("From", margin + padX, y, { width: innerW });
   y += doc.heightOfString("From", { width: innerW }) + labelGap;
 
@@ -280,7 +341,7 @@ function drawCompanyAndClientBlocks(doc, inv) {
   doc.restore();
 
   y = topY + padTop;
-  doc.fillColor(THEME).font("Helvetica-Bold").fontSize(11);
+  doc.fillColor(branding.themeColor).font("Helvetica-Bold").fontSize(11);
   doc.text("Bill To", x2 + padX, y, { width: innerW });
   y += doc.heightOfString("Bill To", { width: innerW }) + labelGap;
 
@@ -299,6 +360,7 @@ function drawCompanyAndClientBlocks(doc, inv) {
 }
 
 function drawItemsTable(doc, inv) {
+  const branding = getInvoiceBranding(inv);
   const margin = doc.page.margins.left;
   const pageWidth = doc.page.width;
   const contentWidth = pageWidth - doc.page.margins.left - doc.page.margins.right;
@@ -321,7 +383,7 @@ function drawItemsTable(doc, inv) {
 
   // Header background
   doc.save();
-  doc.rect(startX, y + 8, contentWidth, rowH).fill(THEME);
+  doc.rect(startX, y + 8, contentWidth, rowH).fill(branding.themeColor);
   doc.restore();
 
   doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(10);
@@ -357,6 +419,7 @@ function drawItemsTable(doc, inv) {
 }
 
 function drawChargesAndTotals(doc, inv) {
+  const branding = getInvoiceBranding(inv);
   const margin = doc.page.margins.left;
   const pageWidth = doc.page.width;
   const contentWidth = pageWidth - doc.page.margins.left - doc.page.margins.right;
@@ -398,7 +461,7 @@ function drawChargesAndTotals(doc, inv) {
   doc.roundedRect(boxX, boxY, rightW, boxH, 10).strokeColor("#d9d9d9").lineWidth(1).stroke();
   doc.restore();
 
-  doc.fillColor(THEME).font("Helvetica-Bold").fontSize(11).text("Total Summary", boxX + 12, boxY + 10);
+  doc.fillColor(branding.themeColor).font("Helvetica-Bold").fontSize(11).text("Total Summary", boxX + 12, boxY + 10);
 
   doc.font("Helvetica").fontSize(10).fillColor("#111827");
   const rows = [
@@ -419,7 +482,8 @@ function drawChargesAndTotals(doc, inv) {
   doc.y = Math.max(y + 20, boxY + boxH + 14);
 }
 
-function drawFooter(doc) {
+function drawFooter(doc, inv) {
+  const branding = getInvoiceBranding(inv);
   const margin = doc.page.margins.left;
   const pageWidth = doc.page.width;
   const contentWidth = pageWidth - doc.page.margins.left - doc.page.margins.right;
@@ -436,18 +500,18 @@ function drawFooter(doc) {
     width: contentWidth
   });
 
-  doc.fillColor("#9ca3af").fontSize(9).text("This is a system-generated document.", margin, bottomY + 42, {
+  doc.fillColor("#9ca3af").fontSize(9).text(branding.invoiceFooter, margin, bottomY + 42, {
     width: contentWidth
   });
 }
 
-function renderInvoice(doc, inv) {
+function renderInvoice(doc, inv, assets = {}) {
   // Draw all content first, then overlay watermark
-  drawHeader(doc, inv);
+  drawHeader(doc, inv, assets);
   drawCompanyAndClientBlocks(doc, inv);
   drawItemsTable(doc, inv);
   drawChargesAndTotals(doc, inv);
-  drawFooter(doc);
+  drawFooter(doc, inv);
   // Watermark drawn LAST using raw PDF operators — no extra pages
   if (inv.kind === 'PROFORMA') {
     drawWatermark(doc, 'PROFORMA');
@@ -455,12 +519,13 @@ function renderInvoice(doc, inv) {
 }
 
 async function generateInvoicePdfFromData({ inv, outPath }) {
+  const logoSource = await resolveLogoSource(getInvoiceBranding(inv).logoUrl);
   await new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: "A4", margin: 36 });
     const stream = fs.createWriteStream(outPath);
 
     doc.pipe(stream);
-    renderInvoice(doc, inv);
+    renderInvoice(doc, inv, { logoSource });
     doc.end();
 
     stream.on("finish", resolve);
@@ -484,5 +549,6 @@ async function generateInvoicePdfToFile({ company_id, factory_id, invoiceId, out
 
 module.exports = {
   generateInvoicePdfToFile,
-  generateInvoicePdfFromData
+  generateInvoicePdfFromData,
+  resolveLogoSource
 };

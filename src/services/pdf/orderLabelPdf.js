@@ -1,13 +1,13 @@
 const PDFDocument = require("pdfkit");
 const fs = require("fs");
-const path = require("path");
 const prisma = require("../../config/db");
+const { resolveLogoSource } = require("./invoicePdf");
 
-const THEME = (process.env.PDF_THEME_COLOR || "#5d309d").trim();
+const THEME = (process.env.PDF_THEME_COLOR || "#0f766e").trim();
 
-function resolveLogoPath() {
-  const p = process.env.INVOICE_LOGO_PATH || "src/assets/babanamak-logo.jpeg";
-  return path.isAbsolute(p) ? p : path.join(process.cwd(), p);
+function themeFrom(company) {
+  const value = String(company?.platform_config?.theme_color || "").trim();
+  return /^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})$/.test(value) ? value : THEME;
 }
 
 async function fetchOrderForLabel(company_id, factory_id, orderId) {
@@ -18,13 +18,14 @@ async function fetchOrderForLabel(company_id, factory_id, orderId) {
       items: { include: { product: { include: { category: true } } } },
       charges: true,
       factory: true,
-      company: true,
+      company: { include: { platform_config: true } },
       sales_company: true
     }
   });
 }
 
-function renderLabel(doc, order) {
+function renderLabel(doc, order, assets = {}) {
+  const theme = themeFrom(order.company);
   const pageWidth = doc.page.width;
   const left = doc.page.margins.left;
   const contentWidth = pageWidth - left - doc.page.margins.right;
@@ -33,7 +34,7 @@ function renderLabel(doc, order) {
   const headerH = 50;
 
   doc.save();
-  doc.rect(0, 0, pageWidth, headerH).fill(THEME);
+  doc.rect(0, 0, pageWidth, headerH).fill(theme);
   doc.restore();
 
   // Logo card (square to match logo)
@@ -43,22 +44,21 @@ function renderLabel(doc, order) {
   const logoBoxY = (headerH - logoBoxH) / 2;
 
   doc.save();
-  doc.roundedRect(logoBoxX, logoBoxY, logoBoxW, logoBoxH, 8).fill("#5d309d  ");
+  doc.roundedRect(logoBoxX, logoBoxY, logoBoxW, logoBoxH, 8).fill("#ffffff");
   doc.restore();
 
-  const logoPath = resolveLogoPath();
   try {
-    if (fs.existsSync(logoPath)) {
-      doc.image(logoPath, logoBoxX + 4, logoBoxY + 4, {
+    if (assets.logoSource) {
+      doc.image(assets.logoSource, logoBoxX + 4, logoBoxY + 4, {
         fit: [logoBoxW - 8, logoBoxH - 8],
         align: "center",
         valign: "center"
       });
     } else {
-      doc.fillColor(THEME).font("Helvetica-Bold").fontSize(12).text("BABANAMAK", logoBoxX + 10, logoBoxY + 14);
+      doc.fillColor(theme).font("Helvetica-Bold").fontSize(12).text("UNITFLOW", logoBoxX + 10, logoBoxY + 14);
     }
   } catch (e) {
-    doc.fillColor(THEME).font("Helvetica-Bold").fontSize(12).text("BABANAMAK", logoBoxX + 10, logoBoxY + 14);
+    doc.fillColor(theme).font("Helvetica-Bold").fontSize(12).text("UNITFLOW", logoBoxX + 10, logoBoxY + 14);
   }
 
   // Right side – title & order meta
@@ -86,7 +86,7 @@ function renderLabel(doc, order) {
   doc.moveDown(0.4);
 
   // Ship To
-  doc.fillColor(THEME).font("Helvetica-Bold").fontSize(9).text("Ship To:");
+  doc.fillColor(theme).font("Helvetica-Bold").fontSize(9).text("Ship To:");
   doc.font("Helvetica").fontSize(9).fillColor("#111827");
   doc.text(order.client.company_name);
   if (order.client.address) doc.text(order.client.address);
@@ -97,7 +97,7 @@ function renderLabel(doc, order) {
   doc.moveDown(0.4);
 
   // Items
-  doc.fillColor(THEME).font("Helvetica-Bold").fontSize(9).text("Items:");
+  doc.fillColor(theme).font("Helvetica-Bold").fontSize(9).text("Items:");
   doc.font("Helvetica").fontSize(8).fillColor("#111827");
 
   order.items.forEach((it, idx) => {
@@ -118,12 +118,14 @@ async function generateOrderLabelPdfToFile({ company_id, factory_id, orderId, ou
     throw err;
   }
 
+  const logoSource = await resolveLogoSource(order.company?.platform_config?.logo_url);
+
   await new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: "A6", margin: 18 });
     const stream = fs.createWriteStream(outPath);
 
     doc.pipe(stream);
-    renderLabel(doc, order);
+    renderLabel(doc, order, { logoSource });
     doc.end();
 
     stream.on("finish", resolve);

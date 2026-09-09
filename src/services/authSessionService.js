@@ -35,6 +35,34 @@ async function getUserRoles(company_id, user) {
   return roles;
 }
 
+async function getUserPermissionKeys(company_id, user_id) {
+  if (!company_id || !user_id) return [];
+  const [directRows, roleRows] = await Promise.all([
+    prisma.userPermissionMap.findMany({
+      where: {
+        company_id,
+        user_id,
+        permission: { is: { is_active: true } }
+      },
+      include: { permission: { select: { key: true } } }
+    }),
+    prisma.rolePermissionMap.findMany({
+      where: {
+        company_id,
+        permission: { is: { is_active: true } },
+        role: {
+          is: {
+            is_active: true,
+            user_map: { some: { company_id, user_id } }
+          }
+        }
+      },
+      include: { permission: { select: { key: true } } }
+    })
+  ]);
+  return [...new Set([...directRows, ...roleRows].map((row) => row.permission?.key).filter(Boolean))];
+}
+
 async function touchSessionIfNeeded(session) {
   if (!session) return;
   const intervalMs = Number(process.env.SESSION_TOUCH_INTERVAL_MS || 60_000);
@@ -83,12 +111,46 @@ async function loadActiveUser(decoded) {
       is_admin: true,
       email: true,
       name: true,
-      status: true
+      status: true,
+      company: {
+        select: {
+          platform_config: {
+            select: {
+              app_title: true,
+              theme_color: true,
+              logo_url: true,
+              locale: true,
+              timezone: true,
+              plan_code: true,
+              billing_cycle: true,
+              subscription_status: true,
+              enabled_modules_json: true,
+              feature_flags_json: true
+            }
+          }
+        }
+      }
     }
   });
 
   if (!user) return null;
-  const roles = await getUserRoles(user.company_id, user);
+  const [roles, permissionKeys] = await Promise.all([
+    getUserRoles(user.company_id, user),
+    getUserPermissionKeys(user.company_id, user.id)
+  ]);
+  const platformConfig = user.company?.platform_config || {};
+  const branding = {
+    app_title: platformConfig.app_title || null,
+    theme_color: platformConfig.theme_color || null,
+    logo_url: platformConfig.logo_url || null,
+    locale: platformConfig.locale || "en-IN",
+    timezone: platformConfig.timezone || "Asia/Kolkata",
+    plan_code: platformConfig.plan_code || null,
+    billing_cycle: platformConfig.billing_cycle || null,
+    subscription_status: platformConfig.subscription_status || null,
+    enabled_modules: Array.isArray(platformConfig.enabled_modules_json) ? platformConfig.enabled_modules_json : [],
+    feature_flags: platformConfig.feature_flags_json || {}
+  };
 
   return {
     id: user.id,
@@ -96,7 +158,13 @@ async function loadActiveUser(decoded) {
     is_admin: user.is_admin,
     email: user.email,
     name: user.name,
+    branding,
+    platform_config: branding,
+    enabled_modules: branding.enabled_modules,
+    feature_flags: branding.feature_flags,
     roles,
+    permission_keys: permissionKeys,
+    permissions: permissionKeys,
     role: decoded.role || (user.is_admin ? "ADMIN" : roles[0] || "STAFF"),
     jti: decoded.jti || null,
     device_id: decoded.device_id || null,
@@ -272,5 +340,6 @@ module.exports = {
   authenticateRequestToken,
   refreshCoreSessionAuth,
   getUserRoles,
+  getUserPermissionKeys,
   verifyPlatformRuntimeToken
 };

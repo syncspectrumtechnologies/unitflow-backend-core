@@ -13,7 +13,7 @@ function requireEnv(key) {
 async function sendEmailWithAttachment({ toEmail, toName, subject, html, attachmentName, attachmentBuffer }) {
   const apiKey = requireEnv("BREVO_API_KEY");
   const senderEmail = requireEnv("BREVO_SENDER_EMAIL");
-  const senderName = process.env.BREVO_SENDER_NAME || "Babanamak";
+  const senderName = process.env.BREVO_SENDER_NAME || process.env.BRAND_NAME || "UnitFlow";
 
   const payload = {
     sender: { email: senderEmail, name: senderName },

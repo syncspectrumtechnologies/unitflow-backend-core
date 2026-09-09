@@ -1,13 +1,13 @@
 const fs = require("fs");
-const path = require("path");
 const PDFDocument = require("pdfkit");
 const prisma = require("../../config/db");
+const { resolveLogoSource } = require("./invoicePdf");
 
-const THEME = (process.env.PDF_THEME_COLOR || "#5d309d").trim();
+const THEME = (process.env.PDF_THEME_COLOR || "#0f766e").trim();
 
-function resolveLogoPath() {
-  const p = process.env.INVOICE_LOGO_PATH || "src/assets/babanamak-logo.jpeg";
-  return path.isAbsolute(p) ? p : path.join(process.cwd(), p);
+function themeFrom(company) {
+  const value = String(company?.platform_config?.theme_color || "").trim();
+  return /^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})$/.test(value) ? value : THEME;
 }
 
 function safeText(v) {
@@ -17,13 +17,16 @@ function safeText(v) {
 async function generatePurchasePdfToFile({ company_id, factory_id, purchaseId, outPath }) {
   const purchase = await prisma.purchase.findFirst({
     where: { id: purchaseId, company_id, factory_id, is_active: true },
-    include: { items: true, charges: true, factory: { select: { name: true, address: true } } }
+    include: { items: true, charges: true, factory: { select: { name: true, address: true } }, company: { include: { platform_config: true } } }
   });
   if (!purchase) {
     const err = new Error("Purchase not found");
     err.statusCode = 404;
     throw err;
   }
+
+  const theme = themeFrom(purchase.company);
+  const logoSource = await resolveLogoSource(purchase.company?.platform_config?.logo_url);
 
   await new Promise((resolve, reject) => {
     try {
@@ -41,7 +44,7 @@ async function generatePurchasePdfToFile({ company_id, factory_id, purchaseId, o
       const padY = 14;
 
       doc.save();
-      doc.rect(0, 0, pageWidth, headerH).fill(THEME);
+      doc.rect(0, 0, pageWidth, headerH).fill(theme);
       doc.restore();
 
       // Logo card (square to match logo)
@@ -51,22 +54,21 @@ async function generatePurchasePdfToFile({ company_id, factory_id, purchaseId, o
       const logoBoxY = (headerH - logoBoxH) / 2;
 
       doc.save();
-      doc.roundedRect(logoBoxX, logoBoxY, logoBoxW, logoBoxH, 8).fill("#5d309d  ");
+      doc.roundedRect(logoBoxX, logoBoxY, logoBoxW, logoBoxH, 8).fill("#ffffff");
       doc.restore();
 
-      const logoPath = resolveLogoPath();
       try {
-        if (fs.existsSync(logoPath)) {
-          doc.image(logoPath, logoBoxX + 4, logoBoxY + 4, {
+        if (logoSource) {
+          doc.image(logoSource, logoBoxX + 4, logoBoxY + 4, {
             fit: [logoBoxW - 8, logoBoxH - 8],
             align: "center",
             valign: "center"
           });
         } else {
-          doc.fillColor(THEME).font("Helvetica-Bold").fontSize(12).text("BABANAMAK", logoBoxX + 10, logoBoxY + 14);
+          doc.fillColor(theme).font("Helvetica-Bold").fontSize(12).text("UNITFLOW", logoBoxX + 10, logoBoxY + 14);
         }
       } catch (e) {
-        doc.fillColor(THEME).font("Helvetica-Bold").fontSize(12).text("BABANAMAK", logoBoxX + 10, logoBoxY + 14);
+        doc.fillColor(theme).font("Helvetica-Bold").fontSize(12).text("UNITFLOW", logoBoxX + 10, logoBoxY + 14);
       }
 
       // Right column – title & meta
@@ -122,7 +124,7 @@ async function generatePurchasePdfToFile({ company_id, factory_id, purchaseId, o
       doc.restore();
 
       let vy = vendorTopY + vendorPadY;
-      doc.fillColor(THEME).font("Helvetica-Bold").fontSize(11);
+      doc.fillColor(theme).font("Helvetica-Bold").fontSize(11);
       doc.text("Vendor", left + vendorPadX, vy, { width: vendorInner });
       vy += doc.heightOfString("Vendor", { width: vendorInner }) + 6;
 
@@ -153,7 +155,7 @@ async function generatePurchasePdfToFile({ company_id, factory_id, purchaseId, o
 
       // Table header row
       doc.save();
-      doc.rect(startX, y + 8, contentWidth, rowH).fill(THEME);
+      doc.rect(startX, y + 8, contentWidth, rowH).fill(theme);
       doc.restore();
 
       doc.fillColor("#ffffff").font("Helvetica-Bold").fontSize(10);

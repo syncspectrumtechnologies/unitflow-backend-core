@@ -9,6 +9,12 @@ const statsController = require("../controllers/statsController");
 router.use(authMiddleware);
 
 router.get(
+  "/action-center",
+  permissionMiddleware(["stats.view"]),
+  statsController.getActionCenter
+);
+
+router.get(
   "/",
   permissionMiddleware(["stats.view"]),
   statsController.getCompanyStats

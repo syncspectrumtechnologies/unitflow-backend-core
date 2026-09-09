@@ -3,7 +3,12 @@ const path = require("path");
 const { spawnSync } = require("child_process");
 
 const repoRoot = path.resolve(__dirname, "..");
+const envPath = path.join(repoRoot, ".env");
 const prismaCliJs = path.join(repoRoot, "node_modules", "prisma", "build", "index.js");
+
+if (fs.existsSync(envPath)) {
+  require("dotenv").config({ path: envPath });
+}
 
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL is required for prisma migrate deploy");

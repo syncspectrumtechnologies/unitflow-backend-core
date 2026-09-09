@@ -18,13 +18,13 @@ async function fetchOrder(company_id, factory_id, orderId) {
       items: { include: { product: { include: { category: true } } } },
       charges: true,
       factory: true,
-      company: true,
+      company: { include: { platform_config: true } },
       sales_company: true
     }
   });
 }
 
-function buildProformaInvBase({ company_id, factory_id, client, sales_company, items, charges, issue_date, notes, invoice_no, order_ref }) {
+function buildProformaInvBase({ company_id, factory_id, company, client, sales_company, items, charges, issue_date, notes, invoice_no, order_ref }) {
   const subtotal = (items || []).reduce((acc, it) => acc + toNumber(it.line_total), 0);
   const total_charges = sumCharges(charges || []);
   const total = subtotal + total_charges;
@@ -42,7 +42,7 @@ function buildProformaInvBase({ company_id, factory_id, client, sales_company, i
     factory_id,
 
     // invoicePdf prefers sales_company when present
-    company: null,
+    company: company || null,
     sales_company,
     factory: null,
     client,
@@ -70,6 +70,7 @@ function buildProformaFromOrder(order) {
     company_id: order.company_id,
     factory_id: order.factory_id,
     client: order.client,
+    company: order.company,
     sales_company: order.sales_company,
     items,
     charges,
@@ -97,6 +98,7 @@ async function generateProformaInvoicePdfToFile({ company_id, factory_id, orderI
 async function generateProformaPreviewPdfToFile({
   company_id,
   factory_id,
+  company,
   client,
   sales_company,
   items,
@@ -108,6 +110,7 @@ async function generateProformaPreviewPdfToFile({
   const inv = buildProformaInvBase({
     company_id,
     factory_id,
+    company,
     client,
     sales_company,
     items,

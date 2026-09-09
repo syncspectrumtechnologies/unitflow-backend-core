@@ -11,6 +11,27 @@ const {
   revokeAllUserSessions
 } = require("../services/passwordResetService");
 
+function normalizeLoginId(value) {
+  const text = String(value || "").trim().toLowerCase();
+  if (!/^[a-z0-9._-]{3,40}$/.test(text)) return "";
+  return text;
+}
+
+function resolveLoginEmail({ tenantId, email, loginId }) {
+  const raw = String(loginId || email || "").trim();
+  if (!raw) return "";
+  if (raw.includes("@")) return normalizeEmail(raw);
+  const normalized = normalizeLoginId(raw);
+  return normalized && tenantId ? `${normalized}@${tenantId}.unitflow.local` : "";
+}
+
+function publicLoginId(email, companyId) {
+  const normalized = String(email || "").trim().toLowerCase();
+  const suffix = `@${companyId}.unitflow.local`;
+  if (normalized.endsWith(suffix)) return normalized.slice(0, -suffix.length);
+  return normalized;
+}
+
 exports.login = async (req, res) => {
   if (!env.allowDirectCoreLogin) {
     return res.status(403).json({
@@ -19,16 +40,21 @@ exports.login = async (req, res) => {
     });
   }
 
-  const { email, password } = req.body;
   const tenantId = String(req.body?.tenant_id || req.body?.company_id || '').trim() || null;
+  const loginEmail = resolveLoginEmail({
+    tenantId,
+    email: req.body?.email,
+    loginId: req.body?.login_id || req.body?.identifier || req.body?.username
+  });
+  const { password } = req.body;
 
-  if (!email || !password) {
-    return res.status(400).json({ message: "Email and password required" });
+  if (!loginEmail || !password) {
+    return res.status(400).json({ message: "Login ID and password required" });
   }
 
   const user = await prisma.user.findFirst({
     where: {
-      email: normalizeEmail(email),
+      email: loginEmail,
       ...(tenantId ? { company_id: tenantId } : {})
     },
     orderBy: { created_at: "asc" }
@@ -111,13 +137,65 @@ exports.me = async (req, res) => {
         .filter(f => f.is_active);
     }
 
+    const company = await prisma.company.findUnique({
+      where: { id: user.company_id },
+      select: {
+        id: true,
+        name: true,
+        legal_name: true,
+        email: true,
+        phone: true,
+        address: true,
+        state: true,
+        state_code: true,
+        is_gst_enabled: true,
+        platform_config: true
+      }
+    });
+
+    const config = company?.platform_config || {};
+    const branding = {
+      tenant_slug: config.tenant_slug || null,
+      app_title: config.app_title || company?.name || "UnitFlow Core",
+      theme_color: config.theme_color || "#0f766e",
+      logo_url: config.logo_url || null,
+      invoice_header: config.invoice_header || company?.legal_name || company?.name || null,
+      invoice_footer: config.invoice_footer || null,
+      locale: config.locale || "en-IN",
+      timezone: config.timezone || "Asia/Kolkata",
+      plan_code: config.plan_code || null,
+      billing_cycle: config.billing_cycle || null,
+      subscription_status: config.subscription_status || null,
+      enabled_modules: Array.isArray(config.enabled_modules_json) ? config.enabled_modules_json : [],
+      feature_flags: config.feature_flags_json || {},
+      platform_last_synced_at: config.platform_last_synced_at || null
+    };
+
     res.json({
       user_id: user.id,
+      id: user.id,
       email: user.email,
+      login_id: publicLoginId(user.email, user.company_id),
+      name: user.name,
       company_id: user.company_id,
       is_admin: user.is_admin,
       factories,
-      roles: Array.isArray(user.roles) ? user.roles : []
+      roles: Array.isArray(user.roles) ? user.roles : [],
+      permission_keys: Array.isArray(user.permission_keys) ? user.permission_keys : [],
+      permissions: Array.isArray(user.permissions) ? user.permissions : (Array.isArray(user.permission_keys) ? user.permission_keys : []),
+      company: company ? {
+        id: company.id,
+        name: company.name,
+        legal_name: company.legal_name,
+        email: company.email,
+        phone: company.phone,
+        address: company.address,
+        state: company.state,
+        state_code: company.state_code,
+        is_gst_enabled: company.is_gst_enabled
+      } : null,
+      branding,
+      platform_config: branding
     });
 
   } catch (err) {
@@ -235,8 +313,8 @@ exports.resetOwnPasswordWithOtp = async (req, res) => {
 
     if (!email) return res.status(400).json({ message: "email is required" });
     if (!otp) return res.status(400).json({ message: "otp is required" });
-    if (new_password.length < 6) {
-      return res.status(400).json({ message: "new_password must be at least 6 characters" });
+    if (new_password.length < 8 || new_password.length > 128) {
+      return res.status(400).json({ message: "new_password must be between 8 and 128 characters" });
     }
 
     let verified;

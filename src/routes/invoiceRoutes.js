@@ -17,6 +17,12 @@ router.get(
   invoiceController.getInvoices
 );
 
+router.get(
+  "/reminders/due",
+  permissionMiddleware(["invoices.remind"]),
+  invoiceController.getReminderQueue
+);
+
 // Invoice detail
 router.get(
   "/:id",

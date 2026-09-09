@@ -1,4 +1,5 @@
 require("dotenv").config();
+require("./utils/installConsoleRedaction")();
 const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
@@ -67,8 +68,10 @@ if (env.validateEnvOnBoot) {
     process.on("SIGTERM", gracefulShutdown);
     process.on("SIGINT", gracefulShutdown);
 
-    server.listen(env.port, "0.0.0.0", () => {
+    const host = process.env.HOST || "0.0.0.0";
+    server.listen(env.port, host, () => {
       console.log("UnitFlow core API started", {
+        host,
         port: env.port,
         runtime_mode: env.runtimeMode,
         api_client_mode: env.apiClientMode,

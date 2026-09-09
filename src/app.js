@@ -6,6 +6,8 @@ const prisma = require("./config/db");
 const { env, isOriginAllowed } = require("./config/env");
 const requestTimingMiddleware = require("./middlewares/requestTimingMiddleware");
 const compressionMiddleware = require("./middlewares/compressionMiddleware");
+const secureBodyMiddleware = require("./middlewares/secureBodyMiddleware");
+const { clientSafeDetails, redactError } = require("./utils/redact");
 
 const adminRoutes = require("./routes/adminRoutes");
 const authRoutes = require("./routes/authRoutes");
@@ -32,6 +34,7 @@ const messageRoutes = require("./routes/messageRoutes");
 const statsRoutes = require("./routes/statsRoutes");
 const salesCompanyRoutes = require("./routes/salesCompanyRoutes");
 const accountingRoutes = require("./routes/accountingRoutes");
+const tallyRoutes = require("./routes/tallyRoutes");
 const internalPlatformRoutes = require("./routes/internalPlatformRoutes");
 
 // Internal realtime messaging (Socket.IO) uses these REST endpoints for initial load.
@@ -41,18 +44,19 @@ const broadcastRoutes = require("./routes/broadcastRoutes");
 
 const app = express();
 
-function buildRateLimitOptions(baseOptions) {
+function buildRateLimitOptions(baseOptions, redisPrefix) {
   const opts = { ...baseOptions };
-  if (String(process.env.REDIS_RATE_LIMIT_ENABLED || "false").toLowerCase() !== "true") {
+  if (!env.redisRateLimitEnabled || !env.redisUrl) {
     return opts;
   }
 
   try {
     const { RedisStore } = require("rate-limit-redis");
     const { createClient } = require("redis");
-    const client = createClient({ url: process.env.REDIS_URL });
+    const client = createClient({ url: env.redisUrl });
     client.connect().catch((err) => console.error("Redis rate-limit connect error:", err?.message || err));
     opts.store = new RedisStore({
+      prefix: redisPrefix,
       sendCommand: (...args) => client.sendCommand(args)
     });
   } catch (err) {
@@ -80,7 +84,7 @@ app.use(cors({
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Authorization", "Content-Type", "X-Factory-Id", "X-Request-Id", "Idempotency-Key", "X-Idempotency-Key"],
-  exposedHeaders: ["Authorization", "X-Request-Id", "Idempotency-Status", "X-Access-Token", "X-Token-Refreshed", "X-Token-Expires-In", "X-Token-Expires-At"]
+  exposedHeaders: ["Authorization", "X-Request-Id", "Idempotency-Status", "X-Login-Required", "X-Access-Token", "X-Token-Refreshed", "X-Token-Expires-In", "X-Token-Expires-At"]
 }));
 
 app.use(requestTimingMiddleware);
@@ -94,11 +98,12 @@ app.use(
     standardHeaders: true,
     legacyHeaders: false,
     skip: (req) => req.path === "/health" || req.path === "/ready"
-  }))
+  }, "unitflow-core:rate-limit:global:"))
 );
 
 app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || "5mb" }));
 app.use(express.urlencoded({ extended: false, limit: process.env.JSON_BODY_LIMIT || "5mb" }));
+app.use(secureBodyMiddleware);
 
 // Note: PDFs are generated on-demand and deleted after the response completes.
 // We intentionally do NOT expose a static PDF directory.
@@ -110,6 +115,7 @@ app.get("/health", (req, res) => {
     app: env.appName,
     runtime_mode: env.runtimeMode,
     api_client_mode: env.apiClientMode,
+    request_id: req.request_id,
     uptime_sec: Math.round(process.uptime())
   });
 });
@@ -121,13 +127,15 @@ app.get("/ready", async (req, res) => {
       ok: true,
       service: env.serviceName,
       db: "ready",
-      build_fingerprint: env.buildFingerprint
+      build_fingerprint: env.buildFingerprint,
+      request_id: req.request_id
     });
   } catch (err) {
     return res.status(503).json({
       ok: false,
       service: env.serviceName,
-      db: "not_ready"
+      db: "not_ready",
+      request_id: req.request_id
     });
   }
 });
@@ -138,7 +146,7 @@ const authLimiter = rateLimit(buildRateLimitOptions({
   max: env.authRateLimitMaxPer15Min,
   standardHeaders: true,
   legacyHeaders: false
-}));
+}, "unitflow-core:rate-limit:auth:"));
 
 app.use("/auth", authLimiter, authRoutes);
 app.use("/admin", adminRoutes);
@@ -180,19 +188,28 @@ app.use("/stats", statsRoutes);
 
 // Accounting / notes / ledgers
 app.use("/accounting", accountingRoutes);
+app.use("/tally", tallyRoutes);
 app.use("/internal/platform", internalPlatformRoutes);
 
 app.use((req, res) => {
-  res.status(404).json({ message: "Not found" });
+  res.status(404).json({ message: "Not found", request_id: req.request_id });
 });
 
 app.use((err, req, res, next) => {
   const statusCode = err.statusCode || err.status || 500;
   if (statusCode >= 500) {
-    console.error("Unhandled request error:", err);
+    console.error("Unhandled request error:", {
+      request_id: req.request_id,
+      method: req.method,
+      path: req.path,
+      error: redactError(err)
+    });
   }
   res.status(statusCode).json({
-    message: statusCode >= 500 ? "Internal server error" : err.message
+    message: statusCode >= 500 ? "Internal server error" : err.message,
+    code: err.code || err.details?.code || undefined,
+    details: statusCode >= 500 ? undefined : clientSafeDetails(err.details || err.meta),
+    request_id: req.request_id
   });
 });
 

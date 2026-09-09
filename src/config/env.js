@@ -45,6 +45,9 @@ const env = {
   corsAllowedOrigins: parseList(process.env.CORS_ALLOWED_ORIGINS),
   corsAllowedOriginRegexes: parseList(process.env.CORS_ALLOWED_ORIGIN_REGEXES),
   corsAllowNoOrigin: parseBool(process.env.CORS_ALLOW_NO_ORIGIN, true),
+  redisUrl: process.env.REDIS_URL || null,
+  redisRateLimitEnabled: parseBool(process.env.REDIS_RATE_LIMIT_ENABLED, false),
+  redisSocketAdapterEnabled: parseBool(process.env.REDIS_SOCKET_ADAPTER_ENABLED, false),
   rateLimitMaxPerMin: parseIntEnv(process.env.RATE_LIMIT_MAX_PER_MIN, 300),
   authRateLimitMaxPer15Min: parseIntEnv(process.env.AUTH_RATE_LIMIT_MAX_PER_15_MIN, 50),
   activityLogEnabled: parseBool(process.env.ACTIVITY_LOG_ENABLED, true),
@@ -77,6 +80,8 @@ function validate() {
       issues.push("PLATFORM_RUNTIME_JWT_SECRET must be at least 32 characters");
     }
   }
+  if (env.redisRateLimitEnabled && !env.redisUrl) issues.push("REDIS_URL is required when REDIS_RATE_LIMIT_ENABLED=true");
+  if (env.redisSocketAdapterEnabled && !env.redisUrl) issues.push("REDIS_URL is required when REDIS_SOCKET_ADAPTER_ENABLED=true");
   if (issues.length) {
     const err = new Error(`Invalid environment configuration: ${issues.join("; ")}`);
     err.name = "EnvValidationError";

@@ -60,6 +60,9 @@ function assertFn(fn, name) {
 }
 
 assertFn(adminController.getUsers, "adminController.getUsers");
+assertFn(adminController.getAccessPolicy, "adminController.getAccessPolicy");
+assertFn(adminController.getActivityLogs, "adminController.getActivityLogs");
+assertFn(adminController.getDataExport, "adminController.getDataExport");
 assertFn(adminController.getUserAssignments, "adminController.getUserAssignments");
 assertFn(adminController.createUser, "adminController.createUser");
 assertFn(adminController.disableUser, "adminController.disableUser");
@@ -89,6 +92,27 @@ assertFn(adminController.revokeRolePermission, "adminController.revokeRolePermis
 // -------------------------
 // USERS
 // -------------------------
+
+router.get(
+  "/access-policy",
+  requireAuth,
+  requirePermission("admin.access"),
+  adminController.getAccessPolicy
+);
+
+router.get(
+  "/activity",
+  requireAuth,
+  requirePermission("admin.access"),
+  adminController.getActivityLogs
+);
+
+router.get(
+  "/data-export",
+  requireAuth,
+  requirePermission("admin.access"),
+  adminController.getDataExport
+);
 
 router.get(
   "/users",

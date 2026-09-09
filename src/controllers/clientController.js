@@ -73,6 +73,246 @@ async function loadActiveClientsByIds(company_id, clientIds, { includeContacts =
   return uniqueIds.map((id) => byId.get(id));
 }
 
+const CLIENT_IMPORT_ROW_LIMIT = 500;
+const CLIENT_IMPORT_TEXT_LIMIT = 1_000_000;
+const CLIENT_IMPORT_ALIASES = {
+  client_name: "company_name",
+  customer_name: "company_name",
+  name: "company_name",
+  mobile: "mobile_no",
+  pan: "pan_it_no",
+  pan_no: "pan_it_no",
+  tax_id: "gstin",
+  postal_code: "pincode",
+  opening_balance: "opening_balance_amount",
+  balance_type: "opening_balance_type",
+  balance_date: "opening_balance_date",
+  active: "is_active"
+};
+
+function normalizeCsvHeader(value) {
+  const key = String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+  return CLIENT_IMPORT_ALIASES[key] || key;
+}
+
+function parseCsvText(text) {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let quoted = false;
+  const source = String(text || "").replace(/^\uFEFF/, "");
+
+  for (let i = 0; i < source.length; i += 1) {
+    const char = source[i];
+    if (char === '"') {
+      if (quoted && source[i + 1] === '"') {
+        cell += '"';
+        i += 1;
+      } else {
+        quoted = !quoted;
+      }
+      continue;
+    }
+    if (!quoted && char === ",") {
+      row.push(cell);
+      cell = "";
+      continue;
+    }
+    if (!quoted && (char === "\n" || char === "\r")) {
+      if (char === "\r" && source[i + 1] === "\n") i += 1;
+      row.push(cell);
+      if (row.some((item) => String(item || "").trim() !== "")) rows.push(row);
+      row = [];
+      cell = "";
+      continue;
+    }
+    cell += char;
+  }
+
+  row.push(cell);
+  if (row.some((item) => String(item || "").trim() !== "")) rows.push(row);
+  if (quoted) {
+    const err = new Error("CSV has an unclosed quoted cell");
+    err.statusCode = 400;
+    throw err;
+  }
+  return rows;
+}
+
+function csvRowsToObjects(csvText) {
+  const rows = parseCsvText(csvText);
+  if (rows.length < 2) return [];
+  const headers = rows[0].map(normalizeCsvHeader);
+  return rows.slice(1).map((cells, index) => {
+    const item = { row_number: index + 2 };
+    headers.forEach((header, cellIndex) => {
+      if (header) item[header] = String(cells[cellIndex] || "").trim();
+    });
+    return item;
+  });
+}
+
+function importText(value, max = 220) {
+  const text = String(value ?? "").trim();
+  return text ? text.slice(0, max) : null;
+}
+
+function parseImportBoolean(value) {
+  const text = String(value ?? "").trim().toLowerCase();
+  if (!text) return undefined;
+  if (["true", "yes", "y", "1", "active"].includes(text)) return true;
+  if (["false", "no", "n", "0", "inactive"].includes(text)) return false;
+  return null;
+}
+
+function parseImportDate(value) {
+  const text = importText(value, 40);
+  if (!text) return null;
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+function clientImportKey(companyName) {
+  return String(companyName || "").trim().toLowerCase();
+}
+
+exports.importClientsCsv = async (req, res) => {
+  try {
+    const company_id = req.user.company_id;
+    const {
+      csv_text,
+      dry_run = false,
+      update_existing = true
+    } = req.body || {};
+
+    const csvText = String(csv_text || "");
+    if (!csvText.trim()) return res.status(400).json({ message: "csv_text is required" });
+    if (csvText.length > CLIENT_IMPORT_TEXT_LIMIT) return res.status(413).json({ message: "CSV file is too large" });
+
+    const rawRows = csvRowsToObjects(csvText);
+    if (rawRows.length === 0) return res.status(400).json({ message: "CSV must include a header and at least one row" });
+    if (rawRows.length > CLIENT_IMPORT_ROW_LIMIT) return res.status(400).json({ message: `Import supports up to ${CLIENT_IMPORT_ROW_LIMIT} rows at a time` });
+
+    const errors = [];
+    const seen = new Set();
+    const normalizedRows = rawRows.map((row) => {
+      const companyName = importText(row.company_name, 220);
+      const openingBalanceAmount = row.opening_balance_amount === undefined || row.opening_balance_amount === ""
+        ? 0
+        : Number(row.opening_balance_amount);
+      const openingBalanceType = String(row.opening_balance_type || "DEBIT").trim().toUpperCase();
+      const openingBalanceDate = parseImportDate(row.opening_balance_date);
+      const isActive = parseImportBoolean(row.is_active);
+      const key = clientImportKey(companyName);
+
+      if (!companyName) errors.push({ row_number: row.row_number, message: "company_name is required" });
+      if (seen.has(key)) errors.push({ row_number: row.row_number, message: "duplicate company_name in this CSV" });
+      seen.add(key);
+      if (row.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(row.email).trim())) {
+        errors.push({ row_number: row.row_number, message: "email is invalid" });
+      }
+      if (!Number.isFinite(openingBalanceAmount) || openingBalanceAmount < 0) {
+        errors.push({ row_number: row.row_number, message: "opening_balance_amount must be zero or more" });
+      }
+      if (!["DEBIT", "CREDIT"].includes(openingBalanceType)) {
+        errors.push({ row_number: row.row_number, message: "opening_balance_type must be DEBIT or CREDIT" });
+      }
+      if (openingBalanceDate === undefined) errors.push({ row_number: row.row_number, message: "opening_balance_date is invalid" });
+      if (isActive === null) errors.push({ row_number: row.row_number, message: "is_active must be true or false" });
+
+      return {
+        row_number: row.row_number,
+        company_name: companyName,
+        gstin: importText(row.gstin, 40),
+        registration_type: importText(row.registration_type, 80),
+        pan_it_no: importText(row.pan_it_no, 40),
+        phone: importText(row.phone, 40),
+        mobile_no: importText(row.mobile_no, 40),
+        email: importText(row.email, 160),
+        address: importText(row.address, 800),
+        city: importText(row.city, 120),
+        state: importText(row.state, 120),
+        country: importText(row.country, 120),
+        pincode: importText(row.pincode, 24),
+        opening_balance_amount: openingBalanceAmount,
+        opening_balance_type: openingBalanceType,
+        opening_balance_date: openingBalanceDate || null,
+        is_active: isActive === undefined ? true : isActive
+      };
+    });
+
+    if (errors.length) {
+      return res.status(422).json({ ok: false, message: "CSV has validation errors", errors });
+    }
+
+    if (dry_run) {
+      return res.json({
+        ok: true,
+        dry_run: true,
+        summary: { valid_rows: normalizedRows.length, update_existing: Boolean(update_existing) }
+      });
+    }
+
+    const summary = await prisma.$transaction(async (tx) => {
+      let created = 0;
+      let updated = 0;
+      let skipped = 0;
+
+      for (const row of normalizedRows) {
+        const existing = await tx.client.findFirst({
+          where: { company_id, company_name: row.company_name }
+        });
+        const data = {
+          gstin: row.gstin,
+          registration_type: row.registration_type,
+          pan_it_no: row.pan_it_no,
+          phone: row.phone,
+          mobile_no: row.mobile_no,
+          email: row.email,
+          address: row.address,
+          city: row.city,
+          state: row.state,
+          country: row.country,
+          pincode: row.pincode,
+          opening_balance_amount: row.opening_balance_amount,
+          opening_balance_type: row.opening_balance_type,
+          opening_balance_date: row.opening_balance_date,
+          is_active: row.is_active
+        };
+
+        if (existing) {
+          if (!update_existing) {
+            skipped += 1;
+            continue;
+          }
+          await tx.client.update({ where: { id: existing.id }, data });
+          updated += 1;
+        } else {
+          await tx.client.create({ data: { company_id, company_name: row.company_name, ...data } });
+          created += 1;
+        }
+      }
+
+      return { rows: normalizedRows.length, created, updated, skipped };
+    });
+
+    await logActivity({
+      company_id,
+      user_id: req.user.id,
+      action: "CLIENTS_IMPORTED",
+      entity_type: "client_import",
+      meta: { summary },
+      ip: req.ip,
+      user_agent: req.headers["user-agent"]
+    });
+
+    return res.json({ ok: true, summary });
+  } catch (err) {
+    console.error("importClientsCsv error:", err);
+    return res.status(err.statusCode || 500).json({ message: err.message || "Internal server error" });
+  }
+};
+
 exports.createClient = async (req, res) => {
   try {
     const company_id = req.user.company_id;
@@ -695,13 +935,13 @@ exports.reEngageClient = async (req, res) => {
     const daysSince = lastOrderDate ? Math.floor((Date.now() - new Date(lastOrderDate).getTime()) / (24 * 3600 * 1000)) : null;
     const eligible = !lastOrderDate || daysSince >= 45;
 
-    const draftedSubject = subject || `Quick check-in - ${process.env.BRAND_NAME || "Babanamak"}`;
+    const draftedSubject = subject || `Quick check-in - ${process.env.BRAND_NAME || "UnitFlow"}`;
     const draftedMessage =
       message ||
       `Hello ${client.company_name},\n\nWe noticed we haven't received an order from you in the last ${daysSince ?? "few"} days.` +
         `${lastOrderDate ? ` Your last order was on ${new Date(lastOrderDate).toLocaleDateString()}.` : ""}` +
         "\n\nIf you need any assistance, updated pricing, or want to place a new order, just reply to this email and we'll help immediately.\n\nThanks,\n" +
-        (process.env.BRAND_NAME || "Babanamak");
+        (process.env.BRAND_NAME || "UnitFlow");
 
     const defaultEmail = client.contacts?.find(c => c.email)?.email || client.email || null;
     const email = to_email || defaultEmail;
@@ -771,7 +1011,7 @@ exports.generateClientLetterPdf = async (req, res) => {
     await generateClientLetterPdfToStream({
       stream,
       branding: {
-        companyName: process.env.PDF_BRAND_NAME || process.env.BRAND_NAME || "Babanamak",
+        companyName: process.env.PDF_BRAND_NAME || process.env.BRAND_NAME || "UnitFlow",
         companyAddress: process.env.PDF_BRAND_ADDRESS || process.env.BRAND_ADDRESS || "",
         themeColor: process.env.PDF_THEME_COLOR || process.env.PDF_THEME || "#5d309d"
       },
@@ -801,7 +1041,7 @@ exports.generateBulkClientLetterPdf = async (req, res) => {
     const finalTitle = title || 'Letter';
     const finalBody = (body || getDefaultLetterBody(finalTitle)).toString();
     const branding = {
-      companyName: process.env.PDF_BRAND_NAME || process.env.BRAND_NAME || 'Babanamak',
+      companyName: process.env.PDF_BRAND_NAME || process.env.BRAND_NAME || 'UnitFlow',
       companyAddress: process.env.PDF_BRAND_ADDRESS || process.env.BRAND_ADDRESS || '',
       themeColor: process.env.PDF_THEME_COLOR || process.env.PDF_THEME || '#5d309d'
     };

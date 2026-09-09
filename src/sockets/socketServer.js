@@ -4,6 +4,7 @@ const { Server } = require("socket.io");
 const registerChatHandlers = require("./chatHandlers");
 const registerBroadcastHandlers = require("./broadcastHandlers");
 const { authenticateToken } = require("../services/authSessionService");
+const { env } = require("../config/env");
 
 let ioInstance = null;
 
@@ -25,7 +26,7 @@ function extractToken(socket) {
 }
 
 function maybeEnableRedisAdapter(io) {
-  if (String(process.env.REDIS_SOCKET_ADAPTER_ENABLED || "false").toLowerCase() !== "true") {
+  if (!env.redisSocketAdapterEnabled || !env.redisUrl) {
     return;
   }
 
@@ -33,7 +34,7 @@ function maybeEnableRedisAdapter(io) {
     const { createAdapter } = require("@socket.io/redis-adapter");
     const { createClient } = require("redis");
 
-    const pubClient = createClient({ url: process.env.REDIS_URL });
+    const pubClient = createClient({ url: env.redisUrl });
     const subClient = pubClient.duplicate();
 
     Promise.all([pubClient.connect(), subClient.connect()])

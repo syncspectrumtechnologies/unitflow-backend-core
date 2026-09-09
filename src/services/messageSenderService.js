@@ -20,7 +20,7 @@ function buildEmailBaseSender() {
     key: "default",
     label: normalizeString(process.env.SMTP_FROM_NAME) || normalizeString(process.env.BRAND_NAME) || normalizeString(process.env.SMTP_FROM_EMAIL) || normalizeString(process.env.SMTP_FROM) || "Default Email",
     from_email: normalizeString(process.env.SMTP_FROM_EMAIL) || normalizeString(process.env.SMTP_FROM) || normalizeString(process.env.SMTP_USER),
-    from_name: normalizeString(process.env.SMTP_FROM_NAME) || normalizeString(process.env.BRAND_NAME) || "Babanamak",
+    from_name: normalizeString(process.env.SMTP_FROM_NAME) || normalizeString(process.env.BRAND_NAME) || "UnitFlow",
     smtp: {
       host: normalizeString(process.env.SMTP_HOST),
       port,

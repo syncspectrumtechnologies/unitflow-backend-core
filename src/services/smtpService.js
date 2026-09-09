@@ -300,7 +300,7 @@ async function sendEmailWithAttachment({ toEmail, toName, subject, html, attachm
   const username = sender.smtp.user || null;
   const password = sender.smtp.pass || null;
   const fromEmail = sender.from_email || process.env.SMTP_FROM_EMAIL || process.env.SMTP_FROM || requireEnv("SMTP_USER");
-  const fromName = sender.from_name || process.env.SMTP_FROM_NAME || process.env.BRAND_NAME || "Babanamak";
+  const fromName = sender.from_name || process.env.SMTP_FROM_NAME || process.env.BRAND_NAME || "UnitFlow";
 
   const normalizedToEmail = String(toEmail || "").trim();
 

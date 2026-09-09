@@ -1,8 +1,6 @@
 const prisma = require("../config/db");
 
-// Even though we no longer use DB permissions for access control,
-// we keep seeding them to avoid breaking older admin screens.
-// Access control is now role-name based.
+// Seed permission keys used by admin screens and custom role grants.
 
 const DEFAULT_PERMISSION_KEYS = [
   // Admin
@@ -12,6 +10,8 @@ const DEFAULT_PERMISSION_KEYS = [
   "factories.view",
   "factories.create",
   "factories.update",
+  "factories.manage",
+  "factories.delete",
 
   // Users / roles / permissions
   "users.view",
@@ -25,6 +25,7 @@ const DEFAULT_PERMISSION_KEYS = [
   "users.factories",
   "users.permissions",
   "permissions.view",
+  "admin.view.permissions",
 
   // Categories
   "categories.view",
@@ -59,9 +60,12 @@ const DEFAULT_PERMISSION_KEYS = [
   "production.view",
   "production.create",
   "production.update",
+  "production.delete",
 
   // Inventory
   "inventory.view",
+  "inventory.create",
+  "inventory.adjust",
   "inventory.movements.view",
   "inventory.movements.create",
 
@@ -70,6 +74,7 @@ const DEFAULT_PERMISSION_KEYS = [
   "orders.create",
   "orders.update",
   "orders.status",
+  "orders.delete",
   "orders.cancel",
   "orders.label.view",
   "orders.label.send",
@@ -79,31 +84,48 @@ const DEFAULT_PERMISSION_KEYS = [
   "invoices.create",
   "invoices.update",
   "invoices.status",
+  "invoices.delete",
   "invoices.pdf",
+  "invoices.pdf.view",
+  "invoices.pdf.send",
   "invoices.remind",
 
   // Payments
   "payments.view",
   "payments.create",
+  "payments.delete",
 
   // Messaging
   "messages.templates",
   "messages.campaigns",
+  "messages.campaigns.create",
+  "messages.campaigns.dispatch",
+  "messages.campaigns.delete",
+  "messages.outbox.view",
   "messages.send",
 
   // Stats
   "stats.view",
+  "stats.delete",
 
   // Purchases
   "purchases.view",
   "purchases.create",
   "purchases.update",
+  "purchases.delete",
   "purchases.status",
   "purchases.pdf",
 
   // Accounting
   "accounting.view",
-  "accounting.create"
+  "accounting.create",
+
+  // Tally integration
+  "tally.view",
+  "tally.manage",
+  "tally.sync",
+  "tally.export",
+  "tally.import"
 ];
 
 async function ensureDefaultPermissions() {
@@ -139,6 +161,7 @@ const SYSTEM_ROLES = [
   { name: "SALES", description: "Clients, orders, catalog" },
   { name: "FINANCE", description: "Invoices, payments, stats" },
   { name: "ACCOUNTS", description: "Accounting pages, ledgers, notes, and vouchers" },
+  { name: "TALLY", description: "Tally integration setup, sync, and ledger mapping" },
   { name: "INVENTORY", description: "Inventory operations" },
   { name: "PRODUCTION", description: "Production operations" },
   { name: "PROCUREMENT", description: "Purchases" },

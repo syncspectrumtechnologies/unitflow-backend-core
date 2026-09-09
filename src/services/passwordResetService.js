@@ -80,7 +80,7 @@ async function createAndSendPasswordResetOtp({ user, ip, userAgent }) {
     }
   });
 
-  const appName = process.env.SMTP_FROM_NAME || 'Babanamak';
+  const appName = process.env.SMTP_FROM_NAME || process.env.BRAND_NAME || 'UnitFlow';
   const subject = 'Your password reset OTP';
   const html = `
     <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.5;">

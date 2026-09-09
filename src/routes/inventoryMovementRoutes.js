@@ -69,4 +69,10 @@ router.post(
   inventoryMovementController.createOpeningStock
 );
 
+router.post(
+  "/opening-stock/import",
+  permissionMiddleware(["inventory.create"]),
+  inventoryMovementController.importOpeningStockCsv
+);
+
 module.exports = router;

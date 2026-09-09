@@ -1,6 +1,6 @@
 # UnitFlow Core API
 
-This core runtime is based on the upgraded Babanamak ERP backend and is wired into the UnitFlow Platform API for tenant provisioning and runtime access control.
+This core runtime is the UnitFlow ERP data plane and is wired into the UnitFlow Platform API for tenant provisioning and runtime access control.
 
 ## Runtime Boundary
 

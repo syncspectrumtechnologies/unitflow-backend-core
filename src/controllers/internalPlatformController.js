@@ -1,5 +1,6 @@
 const bcrypt = require('bcrypt');
 const prisma = require('../config/db');
+const adminController = require('./adminController');
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -18,6 +19,56 @@ function sanitizeString(value, fallback = null) {
 
 function sanitizeBoolean(value, fallback = undefined) {
   return typeof value === 'boolean' ? value : fallback;
+}
+
+function sanitizePositiveInt(value, fallback = null) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const DEFAULT_ENABLED_MODULES = [
+  'dashboard',
+  'orders',
+  'inventory',
+  'production',
+  'purchases',
+  'clients',
+  'products',
+  'categories',
+  'invoices',
+  'payments',
+  'accounting',
+  'tally',
+  'chat',
+  'broadcast',
+  'messages',
+  'factories'
+];
+
+const DEFAULT_FEATURE_FLAGS = {
+  auto_deduct_inventory_on_dispatch: true,
+  keyboard_shortcuts: true,
+  simple_mode: true,
+  low_stock_suggestions: true,
+  order_shortage_warnings: true
+};
+
+function normalizeEnabledModules(value, fallback = DEFAULT_ENABLED_MODULES) {
+  const allowed = new Set(DEFAULT_ENABLED_MODULES);
+  const source = Array.isArray(value) ? value : fallback;
+  const modules = source
+    .map((item) => String(item || '').trim().toLowerCase())
+    .filter((item) => allowed.has(item));
+  return [...new Set(modules.length ? modules : fallback)];
+}
+
+function normalizeFeatureFlags(value, fallback = DEFAULT_FEATURE_FLAGS) {
+  const incoming = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const flags = { ...fallback };
+  for (const key of Object.keys(DEFAULT_FEATURE_FLAGS)) {
+    if (typeof incoming[key] === 'boolean') flags[key] = incoming[key];
+  }
+  return flags;
 }
 
 
@@ -123,6 +174,15 @@ async function upsertCompanyConfig(tx, companyId, payload = {}) {
   if (Object.prototype.hasOwnProperty.call(payload, 'active_until') && payload.active_until !== undefined) {
     updateData.active_until = payload.active_until ? new Date(payload.active_until) : null;
   }
+  if (Object.prototype.hasOwnProperty.call(payload, 'seat_limit') && payload.seat_limit !== undefined) {
+    updateData.seat_limit = sanitizePositiveInt(payload.seat_limit);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'enabled_modules') && payload.enabled_modules !== undefined) {
+    updateData.enabled_modules_json = normalizeEnabledModules(payload.enabled_modules);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'feature_flags') && payload.feature_flags !== undefined) {
+    updateData.feature_flags_json = normalizeFeatureFlags(payload.feature_flags);
+  }
 
   return tx.companyPlatformConfig.upsert({
     where: { company_id: companyId },
@@ -140,6 +200,9 @@ async function upsertCompanyConfig(tx, companyId, payload = {}) {
       plan_code: sanitizeString(payload.plan_code),
       billing_cycle: sanitizeString(payload.billing_cycle),
       subscription_status: sanitizeString(payload.subscription_status, 'pending'),
+      seat_limit: sanitizePositiveInt(payload.seat_limit),
+      enabled_modules_json: normalizeEnabledModules(payload.enabled_modules),
+      feature_flags_json: normalizeFeatureFlags(payload.feature_flags),
       trial_ends_at: payload.trial_ends_at ? new Date(payload.trial_ends_at) : null,
       active_until: payload.active_until ? new Date(payload.active_until) : null,
       platform_last_synced_at: new Date()
@@ -149,19 +212,44 @@ async function upsertCompanyConfig(tx, companyId, payload = {}) {
 
 
 const { comparePassword } = require('../utils/password');
-const { getUserRoles } = require('../services/authSessionService');
+const { getUserRoles, getUserPermissionKeys } = require('../services/authSessionService');
+
+function normalizeLoginId(value) {
+  const text = String(value || '').trim().toLowerCase();
+  if (!/^[a-z0-9._-]{3,40}$/.test(text)) return '';
+  return text;
+}
+
+function resolveRuntimeEmail({ tenantId, email, loginId }) {
+  const raw = String(loginId || email || '').trim();
+  if (!raw) return '';
+  if (raw.includes('@')) return raw.toLowerCase();
+  const normalized = normalizeLoginId(raw);
+  return normalized ? `${normalized}@${tenantId}.unitflow.local` : '';
+}
+
+function publicLoginId(email, companyId) {
+  const normalized = String(email || '').trim().toLowerCase();
+  const suffix = `@${companyId}.unitflow.local`;
+  if (normalized.endsWith(suffix)) return normalized.slice(0, -suffix.length);
+  return normalized;
+}
 
 exports.authenticateRuntimeUser = async (req, res, next) => {
   try {
     const tenantId = sanitizeString(req.body?.tenant_id || req.body?.company_id);
-    const rawEmail = String(req.body?.email || '').trim().toLowerCase();
+    const rawEmail = resolveRuntimeEmail({
+      tenantId,
+      email: req.body?.email,
+      loginId: req.body?.login_id || req.body?.identifier || req.body?.username
+    });
     const password = String(req.body?.password || '');
 
     if (!tenantId) {
       return res.status(400).json({ message: 'tenant_id is required' });
     }
     if (!rawEmail || !password) {
-      return res.status(400).json({ message: 'email and password are required' });
+      return res.status(400).json({ message: 'login_id and password are required' });
     }
 
     const user = await prisma.user.findFirst({
@@ -185,7 +273,10 @@ exports.authenticateRuntimeUser = async (req, res, next) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    const roles = await getUserRoles(user.company_id, user);
+    const [roles, permissionKeys] = await Promise.all([
+      getUserRoles(user.company_id, user),
+      getUserPermissionKeys(user.company_id, user.id)
+    ]);
     const role = user.is_admin ? 'ADMIN' : (roles[0] || 'STAFF');
 
     return res.json({
@@ -194,9 +285,12 @@ exports.authenticateRuntimeUser = async (req, res, next) => {
         id: user.id,
         company_id: user.company_id,
         email: user.email,
+        login_id: publicLoginId(user.email, user.company_id),
         name: user.name,
         is_admin: user.is_admin,
         roles,
+        permission_keys: permissionKeys,
+        permissions: permissionKeys,
         role
       },
       company: {
@@ -205,6 +299,47 @@ exports.authenticateRuntimeUser = async (req, res, next) => {
         is_active: user.company.is_active
       }
     });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+function bindPlatformAdmin(req, res, handler) {
+  const tenantId = sanitizeString(req.params?.tenantId || req.body?.tenant_id || req.query?.tenant_id);
+  if (!tenantId) return res.status(400).json({ message: 'tenant_id is required' });
+  req.user = {
+    id: sanitizeString(req.body?.actor_user_id || req.query?.actor_user_id),
+    company_id: tenantId,
+    is_admin: true
+  };
+  return handler(req, res);
+}
+
+exports.listTenantUsers = (req, res) => {
+  req.query = { page_size: '100', ...(req.query || {}) };
+  return bindPlatformAdmin(req, res, adminController.getUserAssignments);
+};
+
+exports.createTenantUser = (req, res) => bindPlatformAdmin(req, res, adminController.createUser);
+
+exports.listTenantRoles = (req, res) => bindPlatformAdmin(req, res, adminController.getRoles);
+
+exports.createTenantRole = (req, res) => bindPlatformAdmin(req, res, adminController.createRole);
+
+exports.assignTenantUserRole = (req, res) => bindPlatformAdmin(req, res, adminController.assignRole);
+
+exports.attachTenantRolePermissions = (req, res) => bindPlatformAdmin(req, res, adminController.grantRolePermissions);
+
+exports.listTenantPermissions = async (req, res, next) => {
+  try {
+    const tenantId = sanitizeString(req.params?.tenantId);
+    if (!tenantId) return res.status(400).json({ message: 'tenant_id is required' });
+    const rows = await prisma.permission.findMany({
+      where: { company_id: tenantId, is_active: true },
+      orderBy: { key: 'asc' },
+      select: { id: true, key: true, description: true }
+    });
+    return res.json(rows.map((row) => ({ id: row.id, key: row.key, name: row.description || row.key })));
   } catch (error) {
     return next(error);
   }
@@ -282,6 +417,9 @@ exports.provisionTenant = async (req, res, next) => {
         plan_code: sanitizeString(subscription.plan_code),
         billing_cycle: sanitizeString(subscription.billing_cycle),
         subscription_status: sanitizeString(subscription.status, 'active'),
+        seat_limit: sanitizePositiveInt(subscription.seat_limit),
+        enabled_modules: branding.enabled_modules,
+        feature_flags: branding.feature_flags,
         trial_ends_at: subscription.trial_ends_at,
         active_until: subscription.active_until
       });
@@ -348,7 +486,7 @@ exports.provisionTenant = async (req, res, next) => {
 exports.updateTenantStatus = async (req, res, next) => {
   try {
     const { tenantId } = req.params;
-    const { is_active, subscription_status, plan_code, billing_cycle, trial_ends_at, active_until } = req.body || {};
+    const { is_active, subscription_status, plan_code, billing_cycle, trial_ends_at, active_until, seat_limit } = req.body || {};
 
     await prisma.$transaction(async (tx) => {
       if (typeof is_active === 'boolean') {
@@ -359,7 +497,8 @@ exports.updateTenantStatus = async (req, res, next) => {
         plan_code,
         billing_cycle,
         trial_ends_at,
-        active_until
+        active_until,
+        seat_limit
       });
     });
 
@@ -404,6 +543,8 @@ exports.syncTenantConfig = async (req, res, next) => {
         plan_code: branding.plan_code,
         billing_cycle: branding.billing_cycle,
         subscription_status: branding.subscription_status,
+        enabled_modules: branding.enabled_modules,
+        feature_flags: branding.feature_flags,
         trial_ends_at: branding.trial_ends_at,
         active_until: branding.active_until
       });

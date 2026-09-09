@@ -58,7 +58,7 @@ async function uploadMedia({ buffer, filename, contentType, senderKey }) {
     err.statusCode = 400;
     throw err;
   }
-  const boundary = `----babanamak_dt_${crypto.randomBytes(8).toString("hex")}`;
+  const boundary = `----unitflow_dt_${crypto.randomBytes(8).toString("hex")}`;
   const safeFilename = filename || "document.pdf";
   const mimeType = contentType || "application/pdf";
 

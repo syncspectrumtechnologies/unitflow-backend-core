@@ -10,6 +10,7 @@ router.use(authMiddleware);
 
 router.get(
   "/senders",
+  permissionMiddleware(["messages.outbox.view"]),
   messageController.getSenders
 );
 

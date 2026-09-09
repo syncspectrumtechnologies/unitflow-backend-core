@@ -212,6 +212,12 @@ model Company {
   message_dispatch_jobs    MessageDispatchJob[]
   accounting_vouchers      AccountingVoucher[]
   accounting_voucher_lines AccountingVoucherLine[]
+  tally_integration        TallyIntegration?
+  tally_ledger_links       TallyLedgerLink[]
+  tally_voucher_links      TallyVoucherLink[]
+  tally_sync_logs          TallySyncLog[]
+  tally_conflicts          TallyConflict[]
+  tally_reconciliation_runs TallyReconciliationRun[]
 
   // Legal entities used for sales (billing company selection on orders/invoices/payments)
   sales_companies SalesCompany[]
@@ -624,6 +630,7 @@ model Client {
   purchase_advances   PurchaseAdvance[]
   accounting_vouchers AccountingVoucher[]     @relation("AccountingVoucherClient")
   accounting_lines    AccountingVoucherLine[] @relation("AccountingLineClient")
+  tally_ledger_links   TallyLedgerLink[]
 
   @@unique([company_id, company_name])
   @@index([company_id, is_active])
@@ -1361,6 +1368,174 @@ model AccountingVoucherLine {
   @@index([company_id, product_id, created_at])
 }
 
+model TallyIntegration {
+  id                      String    @id @default(cuid())
+  company_id              String    @unique
+  enabled                 Boolean   @default(false)
+  status                  String    @default("DISCONNECTED")
+  tally_company_name      String?
+  tally_url_hint          String?
+  sync_ledgers            Boolean   @default(true)
+  sync_vouchers           Boolean   @default(true)
+  sync_invoices           Boolean   @default(true)
+  sync_payments           Boolean   @default(true)
+  auto_sync               Boolean   @default(false)
+  sync_interval_minutes   Int       @default(15)
+  allow_tally_import      Boolean   @default(false)
+  conflict_strategy       String    @default("REVIEW")
+  reconciliation_tolerance Decimal   @default(1) @db.Decimal(15, 2)
+  connector_token_hash    String?   @unique
+  connector_token_last4   String?
+  connector_last_seen_at  DateTime?
+  last_sync_started_at    DateTime?
+  last_sync_completed_at  DateTime?
+  last_inbound_sync_at    DateTime?
+  last_error              String?
+  created_by              String?
+  created_at              DateTime  @default(now())
+  updated_at              DateTime  @updatedAt
+
+  company       Company             @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  ledger_links  TallyLedgerLink[]
+  voucher_links TallyVoucherLink[]
+  sync_logs     TallySyncLog[]
+  conflicts     TallyConflict[]
+  reconciliation_runs TallyReconciliationRun[]
+
+  @@index([company_id, status])
+}
+
+model TallyLedgerLink {
+  id                 String    @id @default(cuid())
+  company_id         String
+  integration_id     String
+  client_id          String?
+  tally_ledger_name  String
+  tally_guid         String?
+  tally_master_id    String?
+  opening_balance    Decimal?  @db.Decimal(15, 2)
+  closing_balance    Decimal?  @db.Decimal(15, 2)
+  last_synced_at     DateTime?
+  meta               Json?
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @updatedAt
+
+  company     Company          @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  integration TallyIntegration @relation(fields: [integration_id], references: [id], onDelete: Cascade)
+  client      Client?          @relation(fields: [client_id], references: [id], onDelete: SetNull)
+
+  @@unique([company_id, client_id])
+  @@unique([company_id, tally_ledger_name])
+  @@index([company_id, last_synced_at])
+}
+
+model TallyVoucherLink {
+  id                    String    @id @default(cuid())
+  company_id            String
+  integration_id        String
+  source_type           String
+  source_id             String
+  tally_voucher_guid    String?
+  tally_voucher_number  String?
+  tally_voucher_type    String?
+  status                String    @default("PENDING")
+  last_synced_at        DateTime?
+  last_error            String?
+  meta                  Json?
+  created_at            DateTime  @default(now())
+  updated_at            DateTime  @updatedAt
+
+  company     Company          @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  integration TallyIntegration @relation(fields: [integration_id], references: [id], onDelete: Cascade)
+
+  @@unique([company_id, source_type, source_id])
+  @@index([company_id, status])
+  @@index([company_id, last_synced_at])
+}
+
+model TallySyncLog {
+  id              String    @id @default(cuid())
+  company_id      String
+  integration_id  String?
+  direction       String
+  entity_type     String
+  entity_id       String?
+  action          String
+  status          String
+  source_ref      String?
+  target_ref      String?
+  message         String?
+  meta            Json?
+  created_by      String?
+  created_at      DateTime  @default(now())
+  completed_at    DateTime?
+
+  company     Company           @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  integration TallyIntegration? @relation(fields: [integration_id], references: [id], onDelete: SetNull)
+
+  @@index([company_id, created_at])
+  @@index([company_id, status])
+}
+
+model TallyConflict {
+  id               String    @id @default(cuid())
+  company_id       String
+  integration_id   String
+  entity_type      String
+  source_type      String?
+  source_id        String?
+  tally_guid       String?
+  tally_name       String?
+  conflict_type    String
+  severity         String    @default("MEDIUM")
+  status           String    @default("OPEN")
+  unitflow_snapshot Json?
+  tally_snapshot   Json?
+  difference       Decimal?  @db.Decimal(15, 2)
+  resolution       String?
+  resolved_by      String?
+  resolved_at      DateTime?
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @updatedAt
+
+  company     Company          @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  integration TallyIntegration @relation(fields: [integration_id], references: [id], onDelete: Cascade)
+
+  @@index([company_id, status, severity])
+  @@index([company_id, entity_type, source_type, source_id])
+  @@index([integration_id, status])
+}
+
+model TallyReconciliationRun {
+  id                    String    @id @default(cuid())
+  company_id            String
+  integration_id        String
+  status                String
+  from_date             DateTime?
+  to_date               DateTime?
+  matched_count         Int       @default(0)
+  mismatch_count        Int       @default(0)
+  missing_in_tally_count Int      @default(0)
+  missing_in_unitflow_count Int   @default(0)
+  ledger_conflict_count Int       @default(0)
+  unitflow_total        Decimal   @default(0) @db.Decimal(15, 2)
+  tally_total           Decimal   @default(0) @db.Decimal(15, 2)
+  total_difference      Decimal   @default(0) @db.Decimal(15, 2)
+  tolerance             Decimal   @default(1) @db.Decimal(15, 2)
+  source                String?
+  created_by            String?
+  meta                  Json?
+  started_at            DateTime  @default(now())
+  completed_at          DateTime?
+
+  company     Company          @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  integration TallyIntegration @relation(fields: [integration_id], references: [id], onDelete: Cascade)
+
+  @@index([company_id, started_at])
+  @@index([company_id, status])
+  @@index([integration_id, started_at])
+}
+
 //
 // COMPLIANCE REPORTS (company-level, optionally factory-tagged)
 //
@@ -1643,6 +1818,9 @@ model CompanyPlatformConfig {
   plan_code               String?
   billing_cycle           String?
   subscription_status     String?
+  seat_limit              Int?
+  enabled_modules_json    Json?
+  feature_flags_json      Json?
   trial_ends_at           DateTime?
   active_until            DateTime?
   platform_last_synced_at DateTime?

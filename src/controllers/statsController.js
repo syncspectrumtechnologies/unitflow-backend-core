@@ -108,6 +108,268 @@ function buildFactoryScopedWhere(companyId, factoryIds, field = "factory_id") {
   };
 }
 
+function clampInt(value, fallback, min, max) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
+function sumRows(rows, selector) {
+  return rows.reduce((sum, row) => sum + Number(selector(row) || 0), 0);
+}
+
+function actionSeverity(rank) {
+  if (rank >= 90) return "CRITICAL";
+  if (rank >= 60) return "WARNING";
+  return "INFO";
+}
+
+function daysBetween(from, to) {
+  const start = new Date(from);
+  const end = new Date(to);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 0;
+  return Math.floor((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
+}
+
+// GET /stats/action-center?factory_id=...&due_days=7&limit=8
+exports.getActionCenter = async (req, res) => {
+  try {
+    const company_id = req.user.company_id;
+    const factory_id_raw = (req.query.factory_id || req.factory_id || "").toString().trim();
+    const now = new Date();
+    const dueDays = clampInt(req.query.due_days, 7, 1, 60);
+    const limit = clampInt(req.query.limit, 8, 3, 25);
+    const stockThreshold = clampInt(req.query.low_stock_threshold, 0, -999999, 999999);
+    const dueSoonEnd = new Date(now.getTime() + dueDays * 24 * 60 * 60 * 1000);
+
+    const factoryScope = await resolveFactoryScope(req, company_id, factory_id_raw);
+    const scopeReq = factoryScope.ids.length === 1
+      ? { factory_id: factoryScope.ids[0] }
+      : { factory_ids: factoryScope.ids };
+
+    const invoiceWhere = {
+      company_id,
+      ...invoiceVisibilityWhere(scopeReq),
+      is_active: true,
+      status: { notIn: ["PAID", "VOID"] },
+      due_date: { lte: dueSoonEnd }
+    };
+
+    const orderWhere = {
+      company_id,
+      ...orderVisibilityWhere(scopeReq),
+      is_active: true,
+      status: { in: ["CONFIRMED", "PROCESSING"] }
+    };
+
+    const stockWhere = {
+      ...buildFactoryScopedWhere(company_id, factoryScope.ids),
+      quantity: { lte: stockThreshold }
+    };
+
+    const [invoices, pendingOrders, lowStockRows] = await Promise.all([
+      prisma.invoice.findMany({
+        where: invoiceWhere,
+        select: {
+          id: true,
+          invoice_no: true,
+          status: true,
+          total: true,
+          due_date: true,
+          issue_date: true,
+          client: { select: { id: true, company_name: true } },
+          factory: { select: { id: true, name: true } }
+        },
+        orderBy: [{ due_date: "asc" }, { issue_date: "asc" }],
+        take: 150
+      }),
+      prisma.order.findMany({
+        where: orderWhere,
+        select: {
+          id: true,
+          order_no: true,
+          status: true,
+          total: true,
+          required_by: true,
+          order_date: true,
+          client: { select: { id: true, company_name: true } },
+          factory: { select: { id: true, name: true } },
+          _count: { select: { items: true, fulfillments: true, invoices: true } }
+        },
+        orderBy: [{ required_by: "asc" }, { order_date: "asc" }],
+        take: 150
+      }),
+      prisma.stockBalance.findMany({
+        where: stockWhere,
+        include: {
+          product: { select: { id: true, name: true, unit: true, sku: true } },
+          factory: { select: { id: true, name: true } }
+        },
+        orderBy: [{ quantity: "asc" }, { updated_at: "asc" }],
+        take: limit
+      })
+    ]);
+
+    const invoiceIds = invoices.map((invoice) => invoice.id);
+    const allocationGroups = invoiceIds.length
+      ? await prisma.paymentAllocation.groupBy({
+          by: ["invoice_id"],
+          where: {
+            company_id,
+            is_active: true,
+            invoice_id: { in: invoiceIds },
+            payment: { status: "RECORDED" }
+          },
+          _sum: { amount: true }
+        })
+      : [];
+    const paidByInvoice = new Map(allocationGroups.map((row) => [row.invoice_id, Number(row._sum.amount || 0)]));
+
+    const receivableRows = invoices
+      .map((invoice) => {
+        const paid = paidByInvoice.get(invoice.id) || 0;
+        const total = Number(invoice.total || 0);
+        const balance_due = Math.max(0, total - paid);
+        const dueDate = invoice.due_date ? new Date(invoice.due_date) : null;
+        const overdueDays = dueDate && dueDate < now ? Math.max(1, daysBetween(dueDate, now)) : 0;
+        const dueInDays = dueDate && dueDate >= now ? Math.max(0, daysBetween(now, dueDate)) : null;
+        return {
+          id: invoice.id,
+          invoice_no: invoice.invoice_no,
+          status: invoice.status,
+          total,
+          paid,
+          balance_due,
+          due_date: invoice.due_date,
+          issue_date: invoice.issue_date,
+          overdue_days: overdueDays,
+          due_in_days: dueInDays,
+          client_id: invoice.client?.id || null,
+          client_name: invoice.client?.company_name || null,
+          factory_id: invoice.factory?.id || null,
+          factory_name: invoice.factory?.name || null
+        };
+      })
+      .filter((invoice) => invoice.balance_due > 0);
+
+    const overdueInvoices = receivableRows.filter((invoice) => invoice.overdue_days > 0);
+    const dueSoonInvoices = receivableRows.filter((invoice) => !invoice.overdue_days);
+
+    const orderRows = pendingOrders.map((order) => {
+      const requiredDate = order.required_by ? new Date(order.required_by) : null;
+      const overdueDays = requiredDate && requiredDate < now ? Math.max(1, daysBetween(requiredDate, now)) : 0;
+      return {
+        id: order.id,
+        order_no: order.order_no,
+        status: order.status,
+        total: Number(order.total || 0),
+        required_by: order.required_by,
+        order_date: order.order_date,
+        overdue_days: overdueDays,
+        client_id: order.client?.id || null,
+        client_name: order.client?.company_name || null,
+        factory_id: order.factory?.id || null,
+        factory_name: order.factory?.name || null,
+        item_count: order._count?.items || 0,
+        fulfillment_count: order._count?.fulfillments || 0,
+        invoice_count: order._count?.invoices || 0
+      };
+    });
+
+    const stockRows = lowStockRows.map((row) => ({
+      id: row.id,
+      product_id: row.product_id,
+      product_name: row.product?.name || row.product_id,
+      sku: row.product?.sku || null,
+      unit: row.product?.unit || null,
+      factory_id: row.factory_id,
+      factory_name: row.factory?.name || null,
+      quantity: Number(row.quantity || 0),
+      updated_at: row.updated_at
+    }));
+
+    const actions = [
+      ...overdueInvoices.slice(0, limit).map((invoice) => ({
+        key: `invoice:${invoice.id}`,
+        type: "OVERDUE_INVOICE",
+        severity: actionSeverity(invoice.overdue_days >= 30 ? 90 : 70),
+        title: `${invoice.invoice_no} is overdue`,
+        detail: `${invoice.client_name || "Client"} owes ${invoice.balance_due} for ${invoice.overdue_days} day(s).`,
+        module: "invoices",
+        href: `/invoices/${invoice.id}`,
+        rank: invoice.overdue_days >= 30 ? 95 : 75,
+        amount: invoice.balance_due,
+        due_date: invoice.due_date
+      })),
+      ...stockRows.slice(0, limit).map((stock) => ({
+        key: `stock:${stock.factory_id}:${stock.product_id}`,
+        type: "LOW_STOCK",
+        severity: actionSeverity(stock.quantity < 0 ? 95 : 70),
+        title: `${stock.product_name} stock needs attention`,
+        detail: `${stock.factory_name || "Factory"} has ${stock.quantity} ${stock.unit || ""}.`.trim(),
+        module: "inventory",
+        href: `/inventory?product_id=${encodeURIComponent(stock.product_id)}`,
+        rank: stock.quantity < 0 ? 92 : 68,
+        quantity: stock.quantity
+      })),
+      ...orderRows.slice(0, limit).map((order) => ({
+        key: `order:${order.id}`,
+        type: "PENDING_DISPATCH",
+        severity: actionSeverity(order.overdue_days ? 80 : 45),
+        title: `${order.order_no} is waiting for dispatch`,
+        detail: `${order.client_name || "Client"} order has ${order.item_count} item(s).`,
+        module: "orders",
+        href: `/orders/${order.id}`,
+        rank: order.overdue_days ? 82 : 48,
+        required_by: order.required_by
+      })),
+      ...dueSoonInvoices.slice(0, limit).map((invoice) => ({
+        key: `invoice-due:${invoice.id}`,
+        type: "DUE_SOON_INVOICE",
+        severity: actionSeverity(invoice.due_in_days <= 2 ? 60 : 35),
+        title: `${invoice.invoice_no} payment due soon`,
+        detail: `${invoice.client_name || "Client"} has ${invoice.due_in_days} day(s) before due date.`,
+        module: "invoices",
+        href: `/invoices/${invoice.id}`,
+        rank: invoice.due_in_days <= 2 ? 62 : 38,
+        amount: invoice.balance_due,
+        due_date: invoice.due_date
+      }))
+    ].sort((a, b) => b.rank - a.rank).slice(0, limit);
+
+    return res.json({
+      ok: true,
+      meta: {
+        company_id,
+        factory_id: factoryScope.requested,
+        factory_ids: factoryScope.ids,
+        factories: factoryScope.factories,
+        due_days: dueDays,
+        low_stock_threshold: stockThreshold,
+        generated_at: now.toISOString()
+      },
+      summary: {
+        action_count: actions.length,
+        overdue_invoice_count: overdueInvoices.length,
+        overdue_invoice_amount: sumRows(overdueInvoices, (row) => row.balance_due),
+        due_soon_invoice_count: dueSoonInvoices.length,
+        due_soon_invoice_amount: sumRows(dueSoonInvoices, (row) => row.balance_due),
+        low_stock_count: stockRows.length,
+        pending_dispatch_count: orderRows.length,
+        urgent_count: actions.filter((item) => item.severity === "CRITICAL").length
+      },
+      actions,
+      overdue_invoices: overdueInvoices.slice(0, limit),
+      due_soon_invoices: dueSoonInvoices.slice(0, limit),
+      low_stock: stockRows,
+      pending_dispatch_orders: orderRows.slice(0, limit)
+    });
+  } catch (err) {
+    console.error("getActionCenter error:", err);
+    return res.status(err.statusCode || 500).json({ message: err.message || "Internal server error" });
+  }
+};
+
 // GET /stats?factory_id=...&date_from=...&date_to=...
 exports.getCompanyStats = async (req, res) => {
   try {

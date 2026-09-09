@@ -91,6 +91,27 @@ const ORDER_STATUS_VALUES = new Set([
 ]);
 
 const DISPATCH_TRIGGER_STATUSES = new Set(["DISPATCHED", "COMPLETED", "SHIPPED", "DELIVERED"]);
+const ORDER_IMPORT_ROW_LIMIT = 300;
+const ORDER_IMPORT_TEXT_LIMIT = 1_000_000;
+const ORDER_IMPORT_HEADER_ALIASES = {
+  order_no: "order_ref",
+  external_order_no: "order_ref",
+  external_ref: "order_ref",
+  client: "client_name",
+  customer: "client_name",
+  customer_name: "client_name",
+  billing_company: "sales_company_name",
+  sales_company: "sales_company_name",
+  product: "product_name",
+  item: "product_name",
+  item_name: "product_name",
+  pack: "pack_size",
+  packsize: "pack_size",
+  qty: "quantity",
+  rate: "unit_price",
+  price: "unit_price",
+  dispatch_date: "required_by"
+};
 
 function normalizeOrderStatusInput(value) {
   const raw = (value || "").toString().trim().toUpperCase();
@@ -107,6 +128,131 @@ function normalizeOrderStatusInput(value) {
 
 function isDispatchTriggerStatus(status) {
   return DISPATCH_TRIGGER_STATUSES.has(String(status || "").toUpperCase());
+}
+
+function normalizeOrderImportHeader(value) {
+  const key = String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+  return ORDER_IMPORT_HEADER_ALIASES[key] || key;
+}
+
+function parseOrderImportCsv(text) {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let quoted = false;
+  const source = String(text || "").replace(/^\uFEFF/, "");
+
+  for (let i = 0; i < source.length; i += 1) {
+    const char = source[i];
+    if (char === '"') {
+      if (quoted && source[i + 1] === '"') {
+        cell += '"';
+        i += 1;
+      } else {
+        quoted = !quoted;
+      }
+      continue;
+    }
+    if (!quoted && char === ",") {
+      row.push(cell);
+      cell = "";
+      continue;
+    }
+    if (!quoted && (char === "\n" || char === "\r")) {
+      if (char === "\r" && source[i + 1] === "\n") i += 1;
+      row.push(cell);
+      if (row.some((item) => String(item || "").trim())) rows.push(row);
+      row = [];
+      cell = "";
+      continue;
+    }
+    cell += char;
+  }
+
+  row.push(cell);
+  if (row.some((item) => String(item || "").trim())) rows.push(row);
+  if (quoted) {
+    const err = new Error("CSV has an unclosed quoted cell");
+    err.statusCode = 400;
+    throw err;
+  }
+  if (rows.length < 2) return [];
+
+  const headers = rows[0].map(normalizeOrderImportHeader);
+  return rows.slice(1).map((cells, index) => {
+    const item = { row_number: index + 2 };
+    headers.forEach((header, cellIndex) => {
+      if (header) item[header] = String(cells[cellIndex] || "").trim();
+    });
+    return item;
+  });
+}
+
+function normalizeImportText(value, max = 180) {
+  const text = String(value ?? "").trim();
+  return text ? text.slice(0, max) : null;
+}
+
+function normalizeImportKey(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function importNumber(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function buildUniqueLookup(rows, keyFn) {
+  const map = new Map();
+  const duplicateKeys = new Set();
+  rows.forEach((row) => {
+    const key = normalizeImportKey(keyFn(row));
+    if (!key) return;
+    if (map.has(key)) duplicateKeys.add(key);
+    else map.set(key, row);
+  });
+  duplicateKeys.forEach((key) => map.set(key, null));
+  return map;
+}
+
+function resolveImportEntity({ id, name, byId, byName, row_number, label, errors }) {
+  if (id) {
+    const row = byId.get(id);
+    if (!row) errors.push({ row_number, message: `${label}_id was not found` });
+    return row || null;
+  }
+  if (!name) {
+    errors.push({ row_number, message: `${label}_name or ${label}_id is required` });
+    return null;
+  }
+  const key = normalizeImportKey(name);
+  const row = byName.get(key);
+  if (row === null) errors.push({ row_number, message: `${label}_name is ambiguous` });
+  else if (!row) errors.push({ row_number, message: `${label}_name was not found` });
+  return row || null;
+}
+
+function resolveImportProduct({ id, sku, name, pack_size, byId, bySku, byNamePack, row_number, errors }) {
+  if (id) {
+    const product = byId.get(id);
+    if (!product) errors.push({ row_number, message: "product_id was not found" });
+    return product || null;
+  }
+  if (sku) {
+    const product = bySku.get(normalizeImportKey(sku));
+    if (product === null) errors.push({ row_number, message: "sku is ambiguous" });
+    else if (!product) errors.push({ row_number, message: "sku was not found" });
+    return product || null;
+  }
+  if (!name) {
+    errors.push({ row_number, message: "product_name, sku, or product_id is required" });
+    return null;
+  }
+  const product = byNamePack.get(`${normalizeImportKey(name)}::${normalizeImportKey(pack_size)}`);
+  if (product === null) errors.push({ row_number, message: "product_name and pack_size are ambiguous" });
+  else if (!product) errors.push({ row_number, message: "product_name and pack_size were not found" });
+  return product || null;
 }
 
 function hasCommittedInventory(order) {
@@ -346,6 +492,40 @@ async function validateDispatchAllocationsTx(tx, { company_id, user, order, allo
   return { factoryNameById, productNameById };
 }
 
+async function inspectDispatchAllocationsTx(tx, { company_id, user, order, allocationRows }) {
+  const { factoryNameById, productNameById } = await validateDispatchAllocationsTx(tx, {
+    company_id,
+    user,
+    order,
+    allocationRows,
+    checkStock: false
+  });
+
+  const rows = [];
+  for (const row of allocationRows) {
+    const available = await getStockTx(tx, company_id, row.factory_id, row.product_id);
+    const required = Number(row.quantity || 0);
+    rows.push({
+      factory_id: row.factory_id,
+      factory_name: factoryNameById.get(row.factory_id) || row.factory_id,
+      product_id: row.product_id,
+      product_name: productNameById.get(row.product_id) || row.product_id,
+      requested_quantity: required,
+      available_stock: available,
+      short_by: Math.max(0, required - available),
+      ok: available >= required
+    });
+  }
+
+  const shortages = rows.filter((row) => !row.ok);
+  return {
+    ok: shortages.length === 0,
+    rows,
+    shortages,
+    details: shortages.length ? buildInsufficientStockMessage(shortages) : null
+  };
+}
+
 async function getCommittedOrderMovementsTx(tx, { company_id, order_id, fulfillment_ids = [] }) {
   return tx.inventoryMovement.findMany({
     where: {
@@ -409,6 +589,15 @@ async function commitOrderInventoryTx(tx, { company_id, order, allocationRows, u
     fulfillments_created,
     inventory_movements_created: movementRows.length
   };
+}
+
+async function shouldAutoDeductInventoryOnDispatchTx(tx, company_id) {
+  const config = await tx.companyPlatformConfig.findUnique({
+    where: { company_id },
+    select: { feature_flags_json: true }
+  });
+  const flags = config?.feature_flags_json || {};
+  return flags.auto_deduct_inventory_on_dispatch !== false;
 }
 
 async function cancelOrderTx(tx, { company_id, order, note, user_id, now = new Date() }) {
@@ -751,6 +940,95 @@ exports.getPendingOrders = async (req, res) => {
   }
 };
 
+exports.getPendingOrderShortages = async (req, res) => {
+  try {
+    const company_id = req.user.company_id;
+    const fw = orderVisibilityWhere(req);
+    const requestedFactoryId = getRequestedFactoryFilter(req);
+    const where = {
+      company_id,
+      is_active: true,
+      status: { in: ["CONFIRMED", "PROCESSING"] },
+      AND: [fw]
+    };
+
+    if (requestedFactoryId) where.factory_id = requestedFactoryId;
+
+    const orders = await prisma.order.findMany({
+      where,
+      orderBy: [{ required_by: "asc" }, { order_date: "asc" }],
+      take: 250,
+      select: {
+        id: true,
+        order_no: true,
+        factory_id: true,
+        required_by: true,
+        client: { select: { company_name: true } },
+        factory: { select: { id: true, name: true } },
+        items: { select: { product_id: true, quantity: true, product: { select: { id: true, name: true, unit: true } } } }
+      }
+    });
+
+    const demand = new Map();
+    for (const order of orders) {
+      const factoryId = order.factory_id;
+      if (!factoryId) continue;
+      for (const item of order.items || []) {
+        const productId = item.product_id;
+        if (!productId) continue;
+        const key = `${factoryId}|${productId}`;
+        const row = demand.get(key) || {
+          factory_id: factoryId,
+          factory_name: order.factory?.name || factoryId,
+          product_id: productId,
+          product_name: item.product?.name || productId,
+          unit: item.product?.unit || null,
+          demand_quantity: 0,
+          pending_order_count: 0,
+          sample_orders: []
+        };
+        row.demand_quantity += Number(item.quantity || 0);
+        row.pending_order_count += 1;
+        if (row.sample_orders.length < 5) {
+          row.sample_orders.push({
+            id: order.id,
+            order_no: order.order_no,
+            client_name: order.client?.company_name || null,
+            required_by: order.required_by
+          });
+        }
+        demand.set(key, row);
+      }
+    }
+
+    const rows = [];
+    for (const row of demand.values()) {
+      const available = await getBalanceTx(prisma, company_id, row.factory_id, row.product_id);
+      const shortBy = Math.max(0, row.demand_quantity - available);
+      rows.push({
+        ...row,
+        available_stock: available,
+        short_by: shortBy,
+        ok: shortBy <= 0
+      });
+    }
+
+    const shortages = rows
+      .filter((row) => !row.ok)
+      .sort((a, b) => b.short_by - a.short_by || a.product_name.localeCompare(b.product_name));
+
+    return res.json({
+      ok: shortages.length === 0,
+      checked_order_count: orders.length,
+      shortage_count: shortages.length,
+      shortages
+    });
+  } catch (err) {
+    console.error("getPendingOrderShortages error:", err);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
 exports.getOrderById = async (req, res) => {
   try {
     const company_id = req.user.company_id;
@@ -830,6 +1108,276 @@ exports.getOrderById = async (req, res) => {
   } catch (err) {
     console.error("getOrderById error:", err);
     return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+exports.importOrdersCsv = async (req, res) => {
+  try {
+    const company_id = req.user.company_id;
+    const factory_id = requireSingleFactory(req);
+    const { csv_text, dry_run = false, prevent_duplicate_refs = true } = req.body || {};
+    const csvText = String(csv_text || "");
+
+    if (!csvText.trim()) return res.status(400).json({ message: "csv_text is required" });
+    if (csvText.length > ORDER_IMPORT_TEXT_LIMIT) return res.status(413).json({ message: "CSV file is too large" });
+
+    const rawRows = parseOrderImportCsv(csvText);
+    if (!rawRows.length) return res.status(400).json({ message: "CSV must include a header and at least one row" });
+    if (rawRows.length > ORDER_IMPORT_ROW_LIMIT) return res.status(400).json({ message: `Import supports up to ${ORDER_IMPORT_ROW_LIMIT} rows at a time` });
+
+    const [clients, salesCompanies, products] = await Promise.all([
+      prisma.client.findMany({
+        where: { company_id, is_active: true },
+        select: { id: true, company_name: true }
+      }),
+      prisma.salesCompany.findMany({
+        where: { company_id, is_active: true },
+        select: { id: true, name: true }
+      }),
+      prisma.product.findMany({
+        where: { company_id, is_active: true },
+        select: { id: true, name: true, sku: true, pack_size: true, price: true, category_id: true }
+      })
+    ]);
+
+    const clientsById = new Map(clients.map((row) => [row.id, row]));
+    const clientsByName = buildUniqueLookup(clients, (row) => row.company_name);
+    const salesById = new Map(salesCompanies.map((row) => [row.id, row]));
+    const salesByName = buildUniqueLookup(salesCompanies, (row) => row.name);
+    const productsById = new Map(products.map((row) => [row.id, row]));
+    const productsBySku = buildUniqueLookup(products, (row) => row.sku);
+    const productsByNamePack = buildUniqueLookup(products, (row) => `${row.name || ""}::${row.pack_size || ""}`);
+    const errors = [];
+    const groups = new Map();
+
+    rawRows.forEach((row) => {
+      const orderRef = normalizeImportText(row.order_ref, 80);
+      const client = resolveImportEntity({
+        id: normalizeImportText(row.client_id, 80),
+        name: normalizeImportText(row.client_name, 220),
+        byId: clientsById,
+        byName: clientsByName,
+        row_number: row.row_number,
+        label: "client",
+        errors
+      });
+      const salesCompany = resolveImportEntity({
+        id: normalizeImportText(row.sales_company_id, 80),
+        name: normalizeImportText(row.sales_company_name, 220),
+        byId: salesById,
+        byName: salesByName,
+        row_number: row.row_number,
+        label: "sales_company",
+        errors
+      });
+      const product = resolveImportProduct({
+        id: normalizeImportText(row.product_id, 80),
+        sku: normalizeImportText(row.sku, 100),
+        name: normalizeImportText(row.product_name, 220),
+        pack_size: normalizeImportText(row.pack_size, 100),
+        byId: productsById,
+        bySku: productsBySku,
+        byNamePack: productsByNamePack,
+        row_number: row.row_number,
+        errors
+      });
+      const quantity = importNumber(row.quantity);
+      const unitPrice = importNumber(row.unit_price);
+      const discount = importNumber(row.discount);
+      const orderDate = row.order_date ? parseDateOrNull(row.order_date) : null;
+      const requiredBy = row.required_by ? parseDateOrNull(row.required_by) : null;
+
+      if (!orderRef) errors.push({ row_number: row.row_number, message: "order_ref is required" });
+      if (!Number.isFinite(quantity) || quantity <= 0) errors.push({ row_number: row.row_number, message: "quantity must be > 0" });
+      if (unitPrice !== null && (!Number.isFinite(unitPrice) || unitPrice < 0)) errors.push({ row_number: row.row_number, message: "unit_price must be zero or more" });
+      if (discount !== null && (!Number.isFinite(discount) || discount < 0)) errors.push({ row_number: row.row_number, message: "discount must be zero or more" });
+      if (row.order_date && !orderDate) errors.push({ row_number: row.row_number, message: "order_date is invalid" });
+      if (row.required_by && !requiredBy) errors.push({ row_number: row.row_number, message: "required_by is invalid" });
+
+      if (!orderRef || !client || !salesCompany || !product || errors.some((err) => err.row_number === row.row_number)) return;
+
+      const group = groups.get(orderRef) || {
+        ref: orderRef,
+        row_numbers: [],
+        client_id: client.id,
+        sales_company_id: salesCompany.id,
+        order_date: orderDate,
+        required_by: requiredBy,
+        logistics: normalizeImportText(row.logistics, 250),
+        notes: normalizeImportText(row.notes, 1000),
+        internal_notes: normalizeImportText(row.internal_notes, 1000),
+        items: []
+      };
+
+      if (group.client_id !== client.id) errors.push({ row_number: row.row_number, message: "all rows for one order_ref must use the same client" });
+      if (group.sales_company_id !== salesCompany.id) errors.push({ row_number: row.row_number, message: "all rows for one order_ref must use the same sales company" });
+      if (String(group.order_date || "") !== String(orderDate || "")) errors.push({ row_number: row.row_number, message: "all rows for one order_ref must use the same order_date" });
+      if (String(group.required_by || "") !== String(requiredBy || "")) errors.push({ row_number: row.row_number, message: "all rows for one order_ref must use the same required_by" });
+
+      group.row_numbers.push(row.row_number);
+      group.items.push({
+        product_id: product.id,
+        quantity,
+        unit_price: unitPrice,
+        discount: discount || null,
+        remarks: normalizeImportText(row.remarks || row.line_remarks, 500)
+      });
+      groups.set(orderRef, group);
+    });
+
+    if (prevent_duplicate_refs && groups.size) {
+      const duplicateRefs = [];
+      for (const ref of groups.keys()) {
+        const existing = await prisma.order.findFirst({
+          where: { company_id, internal_notes: { contains: `[import_ref:${ref}]` } },
+          select: { order_no: true }
+        });
+        if (existing) duplicateRefs.push({ ref, order_no: existing.order_no });
+      }
+      duplicateRefs.forEach((item) => errors.push({ row_number: null, message: `order_ref ${item.ref} was already imported as ${item.order_no}` }));
+    }
+
+    if (errors.length) {
+      return res.status(400).json({
+        ok: false,
+        message: "Import validation failed",
+        errors: errors.slice(0, 80),
+        error_count: errors.length
+      });
+    }
+
+    const orderGroups = [...groups.values()];
+    const allProductIds = [...new Set(orderGroups.flatMap((group) => group.items.map((item) => item.product_id)))];
+    const allClientIds = [...new Set(orderGroups.map((group) => group.client_id))];
+    const clientProducts = await prisma.clientProduct.findMany({
+      where: { company_id, client_id: { in: allClientIds }, product_id: { in: allProductIds } },
+      select: { client_id: true, product_id: true, default_price: true }
+    });
+    const clientPriceByKey = new Map(
+      clientProducts
+        .filter((row) => row.default_price !== null && row.default_price !== undefined)
+        .map((row) => [`${row.client_id}|${row.product_id}`, Number(row.default_price)])
+    );
+
+    let estimatedTotal = 0;
+    orderGroups.forEach((group) => {
+      const subtotal = group.items.reduce((sum, item) => {
+        const product = productsById.get(item.product_id);
+        const fallback = clientPriceByKey.get(`${group.client_id}|${item.product_id}`) ?? Number(product?.price || 0);
+        const price = item.unit_price !== null ? item.unit_price : fallback;
+        return sum + calcLineTotal(Number(item.quantity), Number(price), Number(item.discount || 0));
+      }, 0);
+      estimatedTotal += subtotal;
+    });
+
+    if (dry_run) {
+      return res.json({
+        ok: true,
+        dry_run: true,
+        summary: {
+          rows: rawRows.length,
+          orders: orderGroups.length,
+          items: rawRows.length,
+          estimated_total: estimatedTotal
+        }
+      });
+    }
+
+    const imported = await prisma.$transaction(async (tx) => {
+      const createdOrders = [];
+      for (const group of orderGroups) {
+        const productIds = [...new Set(group.items.map((item) => item.product_id))];
+        const groupProducts = products.filter((product) => productIds.includes(product.id));
+        const orderedCategoryIds = [...new Set(groupProducts.map((product) => product.category_id).filter(Boolean))];
+
+        for (const product_id of productIds) {
+          await tx.clientProduct.upsert({
+            where: { company_id_client_id_product_id: { company_id, client_id: group.client_id, product_id } },
+            create: { company_id, client_id: group.client_id, product_id, is_active: true },
+            update: { is_active: true }
+          });
+        }
+        for (const category_id of orderedCategoryIds) {
+          await tx.clientCategory.upsert({
+            where: { company_id_client_id_category_id: { company_id, client_id: group.client_id, category_id } },
+            create: { company_id, client_id: group.client_id, category_id, is_active: true },
+            update: { is_active: true }
+          });
+        }
+
+        const computedItems = group.items.map((item) => {
+          const product = productsById.get(item.product_id);
+          const fallback = clientPriceByKey.get(`${group.client_id}|${item.product_id}`) ?? Number(product?.price || 0);
+          const price = item.unit_price !== null ? item.unit_price : fallback;
+          const lineTotal = calcLineTotal(Number(item.quantity), Number(price), Number(item.discount || 0));
+          return {
+            company: { connect: { id: company_id } },
+            product: { connect: { id: item.product_id } },
+            quantity: item.quantity,
+            unit_price: price,
+            discount: item.discount || null,
+            line_total: lineTotal,
+            remarks: item.remarks
+          };
+        });
+        const subtotal = computedItems.reduce((sum, item) => sum + Number(item.line_total), 0);
+        const orderDate = group.order_date || new Date();
+        const order = await tx.order.create({
+          data: {
+            company: { connect: { id: company_id } },
+            factory: { connect: { id: factory_id } },
+            client: { connect: { id: group.client_id } },
+            sales_company: { connect: { id: group.sales_company_id } },
+            logistics: group.logistics,
+            order_no: await makeOrderNoTx(tx, company_id, orderDate),
+            status: "CONFIRMED",
+            order_date: orderDate,
+            required_by: group.required_by || null,
+            subtotal,
+            total_charges: 0,
+            total: subtotal,
+            notes: group.notes,
+            internal_notes: [group.internal_notes, `[import_ref:${group.ref}]`].filter(Boolean).join("\n"),
+            is_active: true,
+            created_by: req.user.id,
+            items: { create: computedItems },
+            status_history: {
+              create: {
+                company: { connect: { id: company_id } },
+                status: "CONFIRMED",
+                note: `Imported from CSV ref ${group.ref}`,
+                created_by: req.user.id
+              }
+            }
+          },
+          select: { id: true, order_no: true, total: true }
+        });
+        await ensureInvoiceForOrderTx(tx, { company_id, order_id: order.id, user_id: req.user.id });
+        createdOrders.push({ ...order, import_ref: group.ref });
+      }
+      return createdOrders;
+    }, ORDER_TRANSACTION_OPTIONS);
+
+    const summary = {
+      rows: rawRows.length,
+      orders: imported.length,
+      items: rawRows.length,
+      estimated_total: estimatedTotal
+    };
+
+    await logActivity({
+      company_id,
+      factory_id,
+      user_id: req.user.id,
+      action: "ORDERS_IMPORTED",
+      entity_type: "order_import",
+      meta: { summary }
+    });
+
+    return res.status(201).json({ ok: true, summary, orders: imported });
+  } catch (err) {
+    console.error("importOrdersCsv error:", err);
+    return res.status(err.statusCode || 500).json({ message: err.message || "Internal server error" });
   }
 };
 
@@ -1403,35 +1951,45 @@ exports.updateOrderStatus = async (req, res) => {
       let fulfillmentsCreatedNow = false;
 
       if (isDispatchTriggerStatus(normalizedStatus)) {
-        const allocationRows = buildDispatchAllocationRows(existing, req.body || {}, existing.factory_id || factory_id);
-        const committedMovements = await getCommittedOrderMovementsTx(tx, {
-          company_id,
-          order_id: existing.id,
-          fulfillment_ids: (existing.fulfillments || []).map((row) => row.id)
-        });
+        const autoDeductEnabled = await shouldAutoDeductInventoryOnDispatchTx(tx, company_id);
 
-        if (!committedMovements.length) {
-          await validateDispatchAllocationsTx(tx, {
+        if (autoDeductEnabled) {
+          const allocationRows = buildDispatchAllocationRows(existing, req.body || {}, existing.factory_id || factory_id);
+          const committedMovements = await getCommittedOrderMovementsTx(tx, {
             company_id,
-            user: req.user,
-            order: existing,
-            allocationRows,
-            checkStock: true
+            order_id: existing.id,
+            fulfillment_ids: (existing.fulfillments || []).map((row) => row.id)
           });
 
-          const committed = await commitOrderInventoryTx(tx, {
-            company_id,
-            order: existing,
-            allocationRows,
-            user_id: req.user.id,
-            now: new Date()
-          });
+          if (!committedMovements.length) {
+            await validateDispatchAllocationsTx(tx, {
+              company_id,
+              user: req.user,
+              order: existing,
+              allocationRows,
+              checkStock: true
+            });
 
-          inventoryCommittedNow = committed.inventory_movements_created > 0;
-          fulfillmentsCreatedNow = committed.fulfillments_created > 0;
+            const committed = await commitOrderInventoryTx(tx, {
+              company_id,
+              order: existing,
+              allocationRows,
+              user_id: req.user.id,
+              now: new Date()
+            });
+
+            inventoryCommittedNow = committed.inventory_movements_created > 0;
+            fulfillmentsCreatedNow = committed.fulfillments_created > 0;
+          }
           statusMeta = {
             dispatched_now: fulfillmentsCreatedNow,
             inventory_committed_now: inventoryCommittedNow
+          };
+        } else {
+          statusMeta = {
+            dispatched_now: false,
+            inventory_committed_now: false,
+            inventory_auto_deduct_disabled: true
           };
         }
       }
@@ -1507,6 +2065,81 @@ exports.updateOrderStatus = async (req, res) => {
     }
 
     console.error("updateOrderStatus error:", err);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+// POST /orders/:id/dispatch-preview
+exports.previewDispatch = async (req, res) => {
+  try {
+    const company_id = req.user.company_id;
+    const factory_id = requireSingleFactory(req);
+    const { id } = req.params;
+
+    const existing = await prisma.order.findFirst({
+      where: { AND: [{ id, company_id, is_active: true }, orderVisibilityWhere(req)] },
+      include: {
+        items: { select: { product_id: true, quantity: true } },
+        fulfillments: { where: { is_active: true }, select: { id: true, product_id: true, factory_id: true, quantity: true, is_active: true } },
+        factory: { select: { id: true } }
+      }
+    });
+    if (!existing) return res.status(404).json({ message: "Order not found" });
+
+    const autoDeductEnabled = await prisma.$transaction((tx) => shouldAutoDeductInventoryOnDispatchTx(tx, company_id));
+    if (!autoDeductEnabled) {
+      return res.json({
+        ok: true,
+        auto_deduct_enabled: false,
+        message: "Inventory auto deduction is disabled for this workspace."
+      });
+    }
+
+    const committedMovements = await prisma.$transaction((tx) =>
+      getCommittedOrderMovementsTx(tx, {
+        company_id,
+        order_id: existing.id,
+        fulfillment_ids: (existing.fulfillments || []).map((row) => row.id)
+      })
+    );
+    if (committedMovements.length) {
+      return res.json({
+        ok: true,
+        auto_deduct_enabled: true,
+        already_committed: true,
+        message: "Inventory is already committed for this order."
+      });
+    }
+
+    const allocationRows = buildDispatchAllocationRows(existing, req.body || {}, existing.factory_id || factory_id);
+    const preview = await prisma.$transaction((tx) =>
+      inspectDispatchAllocationsTx(tx, {
+        company_id,
+        user: req.user,
+        order: existing,
+        allocationRows
+      })
+    );
+
+    return res.json({
+      ...preview,
+      auto_deduct_enabled: true,
+      already_committed: false
+    });
+  } catch (err) {
+    if (err && err.message === "DISPATCH_ALLOCATIONS_INVALID") {
+      return res.status(400).json({ message: "Invalid dispatch factory split", ...err.meta });
+    }
+    if (err && err.message === "FACTORY_NOT_FOUND") {
+      return res.status(404).json({ message: "One or more factories not found", ...err.meta });
+    }
+    if (err && err.message === "PRODUCT_NOT_FOUND") {
+      return res.status(404).json({ message: "One or more products not found", ...err.meta });
+    }
+    if (err && err.message === "UNAUTHORIZED_FACTORY_ACCESS") {
+      return res.status(403).json({ message: "Unauthorized factory access", ...err.meta });
+    }
+    console.error("previewDispatch error:", err);
     return res.status(500).json({ message: "Internal server error" });
   }
 };
@@ -1746,9 +2379,10 @@ exports.proformaPreviewFromPayload = async (req, res) => {
       if (!Number.isFinite(q) || q <= 0) return res.status(400).json({ message: "Item quantity must be > 0" });
     }
 
-    const [client, sales_company] = await Promise.all([
+    const [client, sales_company, company] = await Promise.all([
       prisma.client.findFirst({ where: { id: client_id, company_id, is_active: true } }),
-      prisma.salesCompany.findFirst({ where: { id: sales_company_id, company_id, is_active: true } })
+      prisma.salesCompany.findFirst({ where: { id: sales_company_id, company_id, is_active: true } }),
+      prisma.company.findFirst({ where: { id: company_id, is_active: true }, include: { platform_config: true } })
     ]);
 
     if (!client) return res.status(404).json({ message: "Client not found" });
@@ -1807,6 +2441,7 @@ exports.proformaPreviewFromPayload = async (req, res) => {
     await generateProformaPreviewPdfToFile({
       company_id,
       factory_id,
+      company,
       client,
       sales_company,
       items: normalizedItems,

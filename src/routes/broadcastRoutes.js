@@ -6,13 +6,15 @@ const broadcastController = require("../controllers/broadcastController");
 
 const router = express.Router();
 
+router.use(authMiddleware);
+router.use(permissionMiddleware(["im.broadcast.view"]));
+
 // List broadcasts relevant to current user (with seen status)
-router.get("/", authMiddleware, broadcastController.listForMe);
+router.get("/", broadcastController.listForMe);
 
 // Admin recent broadcasts widget
 router.get(
   "/admin/recent",
-  authMiddleware,
   permissionMiddleware("admin.access"),
   broadcastController.listRecentForAdmin
 );
@@ -20,17 +22,15 @@ router.get(
 // Admin creates a broadcast
 router.post(
   "/",
-  authMiddleware,
   permissionMiddleware("admin.access"),
   broadcastController.create
 );
 
 // Employee marks broadcast as seen
-router.post("/:broadcastId/seen", authMiddleware, broadcastController.markSeen);
+router.post("/:broadcastId/seen", broadcastController.markSeen);
 
 router.delete(
   "/:broadcastId",
-  authMiddleware,
   permissionMiddleware("admin.access"),
   broadcastController.deleteBroadcast
 );

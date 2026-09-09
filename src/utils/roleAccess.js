@@ -1,6 +1,5 @@
 // Central role-based access control.
-// We intentionally keep this separate from the legacy DB permissions tables.
-// Access is determined by ROLE NAMES assigned to a user (UserRoleMap).
+// Role names provide fast defaults; DB permission maps provide custom grants.
 
 const CAP = {
   ADMIN: "ADMIN_ACCESS",
@@ -35,7 +34,9 @@ const CAP = {
   MESSAGING_USE: "MESSAGING_USE",
   STATS_VIEW: "STATS_VIEW",
   ACCOUNTING_VIEW: "ACCOUNTING_VIEW",
-  ACCOUNTING_MANAGE: "ACCOUNTING_MANAGE"
+  ACCOUNTING_MANAGE: "ACCOUNTING_MANAGE",
+  TALLY_VIEW: "TALLY_VIEW",
+  TALLY_MANAGE: "TALLY_MANAGE"
 };
 
 // Predefined roles (users can have multiple; union of capabilities).
@@ -64,7 +65,9 @@ const ROLE_CAPS = {
     CAP.MESSAGING_USE,
     CAP.STATS_VIEW,
     CAP.ACCOUNTING_VIEW,
-    CAP.ACCOUNTING_MANAGE
+    CAP.ACCOUNTING_MANAGE,
+    CAP.TALLY_VIEW,
+    CAP.TALLY_MANAGE
   ],
 
   // Regular staff can operate core flows but should not manage master data.
@@ -106,7 +109,9 @@ const ROLE_CAPS = {
     CAP.STATS_VIEW,
     CAP.MESSAGING_USE,
     CAP.ACCOUNTING_VIEW,
-    CAP.ACCOUNTING_MANAGE
+    CAP.ACCOUNTING_MANAGE,
+    CAP.TALLY_VIEW,
+    CAP.TALLY_MANAGE
   ],
 
   // Dedicated accounting role that can be layered on top of operational roles.
@@ -119,7 +124,9 @@ const ROLE_CAPS = {
     CAP.INVOICES_VIEW,
     CAP.PURCHASES_VIEW,
     CAP.ACCOUNTING_VIEW,
-    CAP.ACCOUNTING_MANAGE
+    CAP.ACCOUNTING_MANAGE,
+    CAP.TALLY_VIEW,
+    CAP.TALLY_MANAGE
   ],
 
   // Alias support in case some environments create the role with a slightly
@@ -131,7 +138,9 @@ const ROLE_CAPS = {
     CAP.INVOICES_VIEW,
     CAP.PURCHASES_VIEW,
     CAP.ACCOUNTING_VIEW,
-    CAP.ACCOUNTING_MANAGE
+    CAP.ACCOUNTING_MANAGE,
+    CAP.TALLY_VIEW,
+    CAP.TALLY_MANAGE
   ],
 
   INVENTORY: [
@@ -153,7 +162,8 @@ const ROLE_CAPS = {
     CAP.INVENTORY_VIEW
   ],
 
-  MESSAGING: [CAP.MESSAGING_USE]
+  MESSAGING: [CAP.MESSAGING_USE],
+  TALLY: [CAP.CLIENTS_VIEW, CAP.INVOICES_VIEW, CAP.PAYMENTS_VIEW, CAP.ACCOUNTING_VIEW, CAP.TALLY_VIEW, CAP.TALLY_MANAGE]
 };
 
 function normalizeRoleName(name) {
@@ -236,6 +246,7 @@ function requiredCapsFromPermissionKeys(keys) {
         reqCaps.add(isManage ? CAP.PURCHASES_MANAGE : CAP.PURCHASES_VIEW);
         break;
       case "messages":
+      case "im":
         reqCaps.add(CAP.MESSAGING_USE);
         break;
       case "stats":
@@ -243,6 +254,9 @@ function requiredCapsFromPermissionKeys(keys) {
         break;
       case "accounting":
         reqCaps.add(isManage ? CAP.ACCOUNTING_MANAGE : CAP.ACCOUNTING_VIEW);
+        break;
+      case "tally":
+        reqCaps.add(isManage ? CAP.TALLY_MANAGE : CAP.TALLY_VIEW);
         break;
       case "permissions":
         // legacy only

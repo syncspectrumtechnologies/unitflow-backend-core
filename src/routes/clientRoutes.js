@@ -38,6 +38,13 @@ router.get(
   clientController.getInactiveClients
 );
 
+// Bulk CSV import
+router.post(
+  "/import",
+  permissionMiddleware(["clients.create"]),
+  clientController.importClientsCsv
+);
+
 // Client order history (must be before /:clientId)
 router.get(
   "/:clientId/orders",

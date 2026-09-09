@@ -32,6 +32,18 @@ router.get(
   orderController.getPendingOrders
 );
 
+router.get(
+  "/shortages",
+  permissionMiddleware(["orders.view"]),
+  orderController.getPendingOrderShortages
+);
+
+router.post(
+  "/import",
+  permissionMiddleware(["orders.create"]),
+  orderController.importOrdersCsv
+);
+
 // Order detail
 router.get(
   "/:id",
@@ -58,6 +70,12 @@ router.put(
   "/:id/status",
   permissionMiddleware(["orders.status"]),
   orderController.updateOrderStatus
+);
+
+router.post(
+  "/:id/dispatch-preview",
+  permissionMiddleware(["orders.status"]),
+  orderController.previewDispatch
 );
 
 // Hard delete order (removes invoice/payment traces and restores client balances where needed)

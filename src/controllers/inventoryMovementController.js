@@ -180,6 +180,142 @@ async function ensureProductsExist(company_id, productIds) {
   }
 }
 
+const OPENING_IMPORT_ROW_LIMIT = 500;
+const OPENING_IMPORT_TEXT_LIMIT = 1_000_000;
+const OPENING_IMPORT_ALIASES = {
+  product: "product_name",
+  name: "product_name",
+  item: "product_name",
+  item_name: "product_name",
+  qty: "quantity",
+  opening_qty: "quantity",
+  opening_quantity: "quantity",
+  cost: "unit_cost",
+  rate: "unit_cost",
+  opening_rate: "unit_cost",
+  opening_date: "date",
+  note: "remarks"
+};
+
+function normalizeCsvHeader(value) {
+  const key = String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+  return OPENING_IMPORT_ALIASES[key] || key;
+}
+
+function parseCsvText(text) {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let quoted = false;
+  const source = String(text || "").replace(/^\uFEFF/, "");
+
+  for (let i = 0; i < source.length; i += 1) {
+    const char = source[i];
+    if (char === '"') {
+      if (quoted && source[i + 1] === '"') {
+        cell += '"';
+        i += 1;
+      } else {
+        quoted = !quoted;
+      }
+      continue;
+    }
+    if (!quoted && char === ",") {
+      row.push(cell);
+      cell = "";
+      continue;
+    }
+    if (!quoted && (char === "\n" || char === "\r")) {
+      if (char === "\r" && source[i + 1] === "\n") i += 1;
+      row.push(cell);
+      if (row.some((item) => String(item || "").trim() !== "")) rows.push(row);
+      row = [];
+      cell = "";
+      continue;
+    }
+    cell += char;
+  }
+
+  row.push(cell);
+  if (row.some((item) => String(item || "").trim() !== "")) rows.push(row);
+  if (quoted) {
+    const err = new Error("CSV has an unclosed quoted cell");
+    err.statusCode = 400;
+    throw err;
+  }
+  return rows;
+}
+
+function csvRowsToObjects(csvText) {
+  const rows = parseCsvText(csvText);
+  if (rows.length < 2) return [];
+  const headers = rows[0].map(normalizeCsvHeader);
+  return rows.slice(1).map((cells, index) => {
+    const item = { row_number: index + 2 };
+    headers.forEach((header, cellIndex) => {
+      if (header) item[header] = String(cells[cellIndex] || "").trim();
+    });
+    return item;
+  });
+}
+
+function importText(value, max = 220) {
+  const text = String(value ?? "").trim();
+  return text ? text.slice(0, max) : null;
+}
+
+function parseImportDate(value) {
+  const text = importText(value, 40);
+  if (!text) return null;
+  const date = parseDateOrNull(text);
+  return date || undefined;
+}
+
+function productImportKey(productId) {
+  return String(productId || "").trim().toLowerCase();
+}
+
+function buildProductLookup(products) {
+  const byId = new Map();
+  const bySku = new Map();
+  const byName = new Map();
+  const byNamePack = new Map();
+
+  for (const product of products) {
+    byId.set(product.id, product);
+    if (product.sku) {
+      const key = product.sku.trim().toLowerCase();
+      bySku.set(key, [...(bySku.get(key) || []), product]);
+    }
+    const nameKey = product.name.trim().toLowerCase();
+    byName.set(nameKey, [...(byName.get(nameKey) || []), product]);
+    byNamePack.set(`${nameKey}::${String(product.pack_size || "").trim().toLowerCase()}`, product);
+  }
+
+  return { byId, bySku, byName, byNamePack };
+}
+
+function resolveImportProduct(row, lookup) {
+  const productId = importText(row.product_id, 80);
+  if (productId) return lookup.byId.get(productId) || null;
+
+  const sku = importText(row.sku, 80);
+  if (sku) {
+    const matches = lookup.bySku.get(sku.toLowerCase()) || [];
+    if (matches.length === 1) return matches[0];
+    return matches.length > 1 ? { ambiguous: true } : null;
+  }
+
+  const productName = importText(row.product_name, 220);
+  if (!productName) return null;
+  const nameKey = productName.toLowerCase();
+  const packSize = importText(row.pack_size, 120);
+  if (packSize !== null) return lookup.byNamePack.get(`${nameKey}::${packSize.toLowerCase()}`) || null;
+  const matches = lookup.byName.get(nameKey) || [];
+  if (matches.length === 1) return matches[0];
+  return matches.length > 1 ? { ambiguous: true } : null;
+}
+
 function buildStockDeletionEntries(body) {
   const sharedDate = parseDateOrNull(body.date) || new Date();
   const sharedRemarks = normalizeString(body.remarks);
@@ -538,6 +674,110 @@ exports.createOpeningStock = async (req, res) => {
     });
   } catch (err) {
     console.error("createOpeningStock error:", err);
+    return res.status(err.statusCode || 500).json({ message: err.message || "Internal server error" });
+  }
+};
+
+exports.importOpeningStockCsv = async (req, res) => {
+  try {
+    const company_id = req.user.company_id;
+    const factory_id = requireSingleFactory(req);
+    const {
+      csv_text,
+      dry_run = false,
+      date,
+      remarks
+    } = req.body || {};
+
+    const csvText = String(csv_text || "");
+    if (!csvText.trim()) return res.status(400).json({ message: "csv_text is required" });
+    if (csvText.length > OPENING_IMPORT_TEXT_LIMIT) return res.status(413).json({ message: "CSV file is too large" });
+
+    const rawRows = csvRowsToObjects(csvText);
+    if (rawRows.length === 0) return res.status(400).json({ message: "CSV must include a header and at least one row" });
+    if (rawRows.length > OPENING_IMPORT_ROW_LIMIT) return res.status(400).json({ message: `Import supports up to ${OPENING_IMPORT_ROW_LIMIT} rows at a time` });
+
+    const products = await prisma.product.findMany({
+      where: { company_id, is_active: true },
+      select: { id: true, name: true, sku: true, pack_size: true }
+    });
+    const lookup = buildProductLookup(products);
+    const sharedDate = parseDateOrNull(date) || getCurrentIndiaFiscalYearBoundaryDate();
+    const sharedRemarks = normalizeString(remarks);
+    const errors = [];
+    const seenProducts = new Set();
+    const entries = rawRows.map((row) => {
+      const product = resolveImportProduct(row, lookup);
+      const qty = validateQtyPositive(row.quantity);
+      const unitCost = row.unit_cost === undefined || row.unit_cost === "" ? 0 : Number(row.unit_cost);
+      const rowDate = parseImportDate(row.date);
+
+      if (!product) errors.push({ row_number: row.row_number, message: "product_id, sku, or product_name did not match an active product" });
+      if (product?.ambiguous) errors.push({ row_number: row.row_number, message: "product match is ambiguous; add sku, product_id, or pack_size" });
+      if (!qty) errors.push({ row_number: row.row_number, message: "quantity must be a number > 0" });
+      if (!Number.isFinite(unitCost) || unitCost < 0) errors.push({ row_number: row.row_number, message: "unit_cost must be zero or more" });
+      if (row.date && rowDate === undefined) errors.push({ row_number: row.row_number, message: "date is invalid" });
+
+      const key = product?.id ? productImportKey(product.id) : null;
+      if (key && seenProducts.has(key)) errors.push({ row_number: row.row_number, message: "duplicate product in this CSV" });
+      if (key) seenProducts.add(key);
+
+      return {
+        row_number: row.row_number,
+        product_id: product?.id || null,
+        quantity: qty,
+        unit_cost: unitCost,
+        date: rowDate || sharedDate,
+        remarks: importText(row.remarks, 500) || sharedRemarks || "Opening stock import"
+      };
+    });
+
+    if (errors.length) {
+      return res.status(422).json({ ok: false, message: "CSV has validation errors", errors });
+    }
+
+    if (dry_run) {
+      return res.json({
+        ok: true,
+        dry_run: true,
+        summary: { valid_rows: entries.length }
+      });
+    }
+
+    const createdEntries = await prisma.$transaction(async (tx) => {
+      const rows = [];
+      for (const entry of entries) {
+        const { movement } = await createMovementTx(tx, {
+          company_id,
+          factory_id,
+          product_id: entry.product_id,
+          type: "IN",
+          source_type: "OPENING",
+          source_id: null,
+          date: entry.date,
+          quantity: entry.quantity,
+          unit_cost: entry.unit_cost,
+          remarks: entry.remarks,
+          created_by: req.user.id
+        });
+        rows.push(movement);
+      }
+      return rows;
+    });
+
+    const summary = { rows: entries.length, created: createdEntries.length };
+    await logActivity({
+      company_id,
+      factory_id,
+      user_id: req.user.id,
+      action: "OPENING_STOCK_IMPORTED",
+      entity_type: "inventory_movement",
+      meta: { summary }
+    });
+
+    return res.status(201).json({ ok: true, summary });
+  } catch (err) {
+    console.error("importOpeningStockCsv error:", err);
     return res.status(err.statusCode || 500).json({ message: err.message || "Internal server error" });
   }
 };

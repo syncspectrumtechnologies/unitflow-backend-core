@@ -84,6 +84,34 @@ function pickFirstNonEmpty(...values) {
   return null;
 }
 
+function clampInt(value, fallback, min, max) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
+function daysBetween(from, to) {
+  const start = new Date(from);
+  const end = new Date(to);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 0;
+  return Math.floor((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
+}
+
+function formatAmount(amount) {
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0
+  }).format(Number(amount || 0));
+}
+
+function buildReminderMessage(invoice) {
+  if (invoice.overdue_days > 0) {
+    return `Your invoice ${invoice.invoice_no} is overdue by ${invoice.overdue_days} day(s). Please arrange payment of ${formatAmount(invoice.balance_due)} at the earliest.`;
+  }
+  return `Reminder: invoice ${invoice.invoice_no} has ${formatAmount(invoice.balance_due)} due${invoice.due_in_days !== null ? ` in ${invoice.due_in_days} day(s)` : ""}.`;
+}
+
 
 async function fetchInvoiceNoteSummary(company_id, invoice_id) {
   const vouchers = await prisma.accountingVoucher.findMany({
@@ -164,6 +192,120 @@ exports.getInvoices = async (req, res) => {
   } catch (err) {
     console.error("getInvoices error:", err);
     return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+exports.getReminderQueue = async (req, res) => {
+  try {
+    const company_id = req.user.company_id;
+    const fw = invoiceVisibilityWhere(req);
+    const now = new Date();
+    const dueDays = clampInt(req.query.due_days, 7, 1, 60);
+    const limit = clampInt(req.query.limit, 25, 5, 100);
+    const dueSoonEnd = new Date(now.getTime() + dueDays * 24 * 60 * 60 * 1000);
+
+    const invoices = await prisma.invoice.findMany({
+      where: {
+        company_id,
+        ...fw,
+        is_active: true,
+        status: { notIn: ["PAID", "VOID"] },
+        due_date: { lte: dueSoonEnd }
+      },
+      include: {
+        client: {
+          select: {
+            id: true,
+            company_name: true,
+            email: true,
+            phone: true,
+            mobile_no: true,
+            contacts: {
+              where: { is_active: true },
+              orderBy: { created_at: "asc" },
+              select: { email: true, phone: true }
+            }
+          }
+        },
+        factory: { select: { id: true, name: true } }
+      },
+      orderBy: [{ due_date: "asc" }, { issue_date: "asc" }],
+      take: 150
+    });
+
+    const invoiceIds = invoices.map((invoice) => invoice.id);
+    const allocationGroups = invoiceIds.length
+      ? await prisma.paymentAllocation.groupBy({
+          by: ["invoice_id"],
+          where: {
+            company_id,
+            is_active: true,
+            invoice_id: { in: invoiceIds },
+            payment: { status: "RECORDED" }
+          },
+          _sum: { amount: true }
+        })
+      : [];
+    const paidByInvoice = new Map(allocationGroups.map((row) => [row.invoice_id, Number(row._sum.amount || 0)]));
+
+    const rows = invoices
+      .map((invoice) => {
+        const paid = paidByInvoice.get(invoice.id) || 0;
+        const total = Number(invoice.total || 0);
+        const balance_due = Math.max(0, total - paid);
+        const dueDate = invoice.due_date ? new Date(invoice.due_date) : null;
+        const overdue_days = dueDate && dueDate < now ? Math.max(1, daysBetween(dueDate, now)) : 0;
+        const due_in_days = dueDate && dueDate >= now ? Math.max(0, daysBetween(now, dueDate)) : null;
+        const email = pickFirstNonEmpty(invoice.client?.contacts?.find((contact) => contact.email)?.email, invoice.client?.email);
+        const phone = pickFirstNonEmpty(invoice.client?.contacts?.find((contact) => contact.phone)?.phone, invoice.client?.mobile_no, invoice.client?.phone);
+        const row = {
+          id: invoice.id,
+          invoice_no: invoice.invoice_no,
+          status: invoice.status,
+          total,
+          paid,
+          balance_due,
+          issue_date: invoice.issue_date,
+          due_date: invoice.due_date,
+          overdue_days,
+          due_in_days,
+          client_id: invoice.client?.id || null,
+          client_name: invoice.client?.company_name || null,
+          factory_id: invoice.factory?.id || null,
+          factory_name: invoice.factory?.name || null,
+          email,
+          phone,
+          can_send_email: Boolean(email),
+          can_send_whatsapp: Boolean(phone),
+          subject: `Invoice Reminder - ${invoice.invoice_no}`
+        };
+        row.message = buildReminderMessage(row);
+        row.priority = overdue_days >= 30 ? "CRITICAL" : overdue_days > 0 ? "OVERDUE" : "DUE_SOON";
+        return row;
+      })
+      .filter((invoice) => invoice.balance_due > 0)
+      .sort((a, b) => b.overdue_days - a.overdue_days || new Date(a.due_date || a.issue_date) - new Date(b.due_date || b.issue_date))
+      .slice(0, limit);
+
+    return res.json({
+      ok: true,
+      meta: {
+        due_days: dueDays,
+        limit,
+        generated_at: now.toISOString()
+      },
+      summary: {
+        count: rows.length,
+        overdue_count: rows.filter((row) => row.overdue_days > 0).length,
+        due_soon_count: rows.filter((row) => !row.overdue_days).length,
+        missing_email_count: rows.filter((row) => !row.email).length,
+        amount_due: rows.reduce((sum, row) => sum + Number(row.balance_due || 0), 0)
+      },
+      reminders: rows
+    });
+  } catch (err) {
+    console.error("getReminderQueue error:", err);
+    return res.status(err.statusCode || 500).json({ message: err.message || "Internal server error" });
   }
 };
 
