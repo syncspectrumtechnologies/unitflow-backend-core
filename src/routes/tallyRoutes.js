@@ -38,6 +38,18 @@ router.put(
   tallyController.updateSettings
 );
 
+router.get(
+  "/mapping-rules",
+  permissionMiddleware(["tally.view"]),
+  tallyController.getMappingRules
+);
+
+router.put(
+  "/mapping-rules",
+  permissionMiddleware(["tally.manage"]),
+  tallyController.updateMappingRules
+);
+
 router.post(
   "/connector-token",
   permissionMiddleware(["tally.manage"]),

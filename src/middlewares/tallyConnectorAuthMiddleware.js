@@ -33,7 +33,8 @@ module.exports = async (req, res, next) => {
         sync_interval_minutes: true,
         allow_tally_import: true,
         conflict_strategy: true,
-        reconciliation_tolerance: true
+        reconciliation_tolerance: true,
+        mapping_rules: true
       }
     });
 

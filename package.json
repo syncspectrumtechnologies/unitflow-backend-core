@@ -10,6 +10,7 @@
     "postinstall": "node scripts/prisma-generate.js",
     "smoke:test": "node scripts/smoke-test.js",
     "test:tally-reconciliation": "node scripts/test-tally-reconciliation.js",
+    "test:tally-mapping": "node scripts/test-tally-mapping.js",
     "prisma:generate": "node scripts/prisma-generate.js",
     "prisma:migrate": "node scripts/prisma-migrate-deploy.js",
     "verify:e2e": "node scripts/verify_auth_inventory_orders.js"
@@ -40,6 +41,7 @@
     "nodemon": "^3.1.11"
   },
   "overrides": {
-    "deepmerge-ts": "^8.0.1"
+    "deepmerge-ts": "^8.0.1",
+    "qs": "^6.16.0"
   }
 }

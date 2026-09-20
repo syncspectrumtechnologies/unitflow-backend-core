@@ -10,6 +10,7 @@ const {
   ensureIntegration,
   serializeIntegration,
   normalizeSettingsPayload,
+  normalizeMappingRules,
   buildSyncPlan
 } = require("../services/tallyService");
 const { processInboundSnapshot, safeClientPatchFromLedger } = require("../services/tallyInboundService");
@@ -83,6 +84,42 @@ exports.updateSettings = async (req, res) => {
   } catch (error) {
     console.error("updateTallySettings error:", error);
     return res.status(500).json({ message: "Unable to save Tally settings" });
+  }
+};
+
+exports.getMappingRules = async (req, res) => {
+  try {
+    const integration = await ensureIntegration(req.user.company_id, req.user.id);
+    return res.json({ mapping_rules: normalizeMappingRules(integration.mapping_rules) });
+  } catch (error) {
+    console.error("getTallyMappingRules error:", error);
+    return res.status(500).json({ message: "Unable to load Tally mapping rules" });
+  }
+};
+
+exports.updateMappingRules = async (req, res) => {
+  try {
+    const company_id = req.user.company_id;
+    const existing = await ensureIntegration(company_id, req.user.id);
+    const mapping_rules = normalizeMappingRules(req.body?.mapping_rules || req.body || existing.mapping_rules);
+    const updated = await prisma.tallyIntegration.update({
+      where: { company_id },
+      data: { mapping_rules }
+    });
+
+    await logActivity({
+      company_id,
+      user_id: req.user.id,
+      action: "TALLY_MAPPING_RULES_UPDATED",
+      entity_type: "tally_integration",
+      entity_id: updated.id,
+      meta: { version: mapping_rules.version }
+    });
+
+    return res.json({ mapping_rules: normalizeMappingRules(updated.mapping_rules), integration: serializeIntegration(updated) });
+  } catch (error) {
+    console.error("updateTallyMappingRules error:", error);
+    return res.status(500).json({ message: "Unable to save Tally mapping rules" });
   }
 };
 

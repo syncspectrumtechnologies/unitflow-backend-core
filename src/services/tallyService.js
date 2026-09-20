@@ -1,5 +1,11 @@
 const crypto = require("crypto");
 const prisma = require("../config/db");
+const {
+  normalizeMappingRules,
+  mapVoucherRecord,
+  stockItemsFromVouchers,
+  systemLedgers
+} = require("./tallyMappingRules");
 
 const SOURCE_TYPES = new Set(["CLIENT", "INVOICE", "PAYMENT", "PURCHASE", "ACCOUNTING_VOUCHER"]);
 const RESULT_STATUSES = new Set(["SYNCED", "FAILED", "SKIPPED", "PENDING"]);
@@ -89,6 +95,7 @@ function serializeIntegration(row) {
     allow_tally_import: row.allow_tally_import,
     conflict_strategy: row.conflict_strategy,
     reconciliation_tolerance: number(row.reconciliation_tolerance),
+    mapping_rules: normalizeMappingRules(row.mapping_rules),
     connector_token_last4: row.connector_token_last4,
     connector_ready: Boolean(row.connector_token_hash),
     connector_last_seen_at: row.connector_last_seen_at,
@@ -116,7 +123,10 @@ function normalizeSettingsPayload(body = {}, existing = {}) {
     conflict_strategy: ["REVIEW", "UNITFLOW_WINS", "TALLY_WINS"].includes(text(body.conflict_strategy, 32).toUpperCase())
       ? text(body.conflict_strategy, 32).toUpperCase()
       : existing.conflict_strategy || "REVIEW",
-    reconciliation_tolerance: number(body.reconciliation_tolerance ?? existing.reconciliation_tolerance ?? 1)
+    reconciliation_tolerance: number(body.reconciliation_tolerance ?? existing.reconciliation_tolerance ?? 1),
+    mapping_rules: body.mapping_rules && typeof body.mapping_rules === "object"
+      ? normalizeMappingRules(body.mapping_rules)
+      : normalizeMappingRules(existing.mapping_rules)
   };
 }
 
@@ -141,6 +151,7 @@ function partyAddress(client) {
 
 async function buildSyncPlan(company_id, options = {}) {
   const integration = await ensureIntegration(company_id);
+  const mappingRules = normalizeMappingRules(integration.mapping_rules);
   const limit = normalizeLimit(options.limit, 250, 5000);
   const since = parseSince(options.since);
   const changed = since ? { updated_at: { gte: since } } : {};
@@ -161,7 +172,11 @@ async function buildSyncPlan(company_id, options = {}) {
   });
   const voucherLinkBySource = linkMap(voucherLinks);
 
-  const [clients, invoices, payments, purchases, vouchers] = await Promise.all([
+  const [company, clients, invoices, payments, purchases, vouchers] = await Promise.all([
+    prisma.company.findUnique({
+      where: { id: company_id },
+      select: { gstin: true, state_code: true, is_gst_enabled: true }
+    }),
     integration.sync_ledgers
       ? prisma.client.findMany({
           where: { company_id, is_active: true, ...changed },
@@ -176,8 +191,9 @@ async function buildSyncPlan(company_id, options = {}) {
           orderBy: { updated_at: "asc" },
           take: limit,
           include: {
-            client: { select: { id: true, company_name: true } },
-            items: { include: { product: { select: { id: true, name: true, sku: true } } } },
+            client: { select: { id: true, company_name: true, gstin: true, state: true } },
+            sales_company: { select: { gstin: true, state_code: true, is_gst_enabled: true } },
+            items: { include: { product: { select: { id: true, name: true, sku: true, unit: true } } } },
             charges: true
           }
         })
@@ -187,7 +203,7 @@ async function buildSyncPlan(company_id, options = {}) {
           where: { company_id, status: "RECORDED", ...(range ? { paid_at: range } : since ? { paid_at: { gte: since } } : {}) },
           orderBy: { paid_at: "asc" },
           take: limit,
-          include: { client: { select: { id: true, company_name: true } }, allocations: true }
+          include: { client: { select: { id: true, company_name: true, gstin: true, state: true } }, allocations: true }
         })
       : [],
     integration.sync_vouchers
@@ -195,7 +211,7 @@ async function buildSyncPlan(company_id, options = {}) {
           where: { company_id, is_active: true, ...(range ? { purchase_date: range } : {}), ...changed },
           orderBy: { updated_at: "asc" },
           take: limit,
-          include: { client: { select: { id: true, company_name: true } }, items: true, charges: true }
+          include: { client: { select: { id: true, company_name: true, gstin: true, state: true } }, items: true, charges: true }
         })
       : [],
     integration.sync_vouchers
@@ -227,92 +243,122 @@ async function buildSyncPlan(company_id, options = {}) {
     };
   });
 
+  const sales_invoices = invoices.map((invoice) => mapVoucherRecord({
+    source_type: "INVOICE",
+    source_id: invoice.id,
+    voucher_no: invoice.invoice_no,
+    date: dateOnly(invoice.issue_date),
+    due_date: dateOnly(invoice.due_date),
+    client_id: invoice.client_id,
+    party_ledger_name: ledgerNameForClient(invoice.client),
+    amount: number(invoice.total),
+    subtotal: number(invoice.subtotal),
+    charges: invoice.charges.map((charge) => ({ title: charge.title, amount: number(charge.amount), type: charge.type })),
+    items: invoice.items.map((item) => ({
+      product_id: item.product_id,
+      name: item.product?.name || item.product?.sku || "Item",
+      sku: item.product?.sku || null,
+      unit: item.product?.unit || null,
+      quantity: number(item.quantity),
+      unit_price: number(item.unit_price),
+      line_total: number(item.line_total)
+    })),
+    status: invoice.status,
+    tally: voucherLinkBySource.get(`INVOICE:${invoice.id}`) || null
+  }, {
+    seller_gstin: invoice.sales_company?.gstin || company?.gstin || null,
+    seller_state_code: invoice.sales_company?.state_code || company?.state_code || null,
+    party_gstin: invoice.client?.gstin || null,
+    party_state_code: null
+  }, mappingRules));
+
+  const receipts = payments.map((payment) => mapVoucherRecord({
+    source_type: "PAYMENT",
+    source_id: payment.id,
+    voucher_no: payment.payment_no || payment.id,
+    date: dateOnly(payment.paid_at),
+    client_id: payment.client_id,
+    party_ledger_name: ledgerNameForClient(payment.client),
+    amount: number(payment.amount),
+    method: payment.method,
+    reference: payment.reference,
+    allocations: payment.allocations.map((row) => ({ invoice_id: row.invoice_id, amount: number(row.amount) })),
+    tally: voucherLinkBySource.get(`PAYMENT:${payment.id}`) || null
+  }, {
+    seller_gstin: company?.gstin || null,
+    seller_state_code: company?.state_code || null,
+    party_gstin: payment.client?.gstin || null,
+    party_state_code: null
+  }, mappingRules));
+
+  const purchases_list = purchases.map((purchase) => mapVoucherRecord({
+    source_type: "PURCHASE",
+    source_id: purchase.id,
+    voucher_no: purchase.purchase_no,
+    date: dateOnly(purchase.purchase_date),
+    client_id: purchase.client_id,
+    party_ledger_name: purchase.client ? ledgerNameForClient(purchase.client) : text(purchase.vendor_name, 160),
+    amount: number(purchase.total),
+    subtotal: number(purchase.subtotal),
+    items: purchase.items.map((item) => ({
+      description: item.description,
+      quantity: number(item.quantity),
+      unit_price: number(item.unit_price),
+      line_total: number(item.line_total)
+    })),
+    charges: purchase.charges.map((charge) => ({ title: charge.label, amount: number(charge.amount), type: "OTHER" })),
+    tally: voucherLinkBySource.get(`PURCHASE:${purchase.id}`) || null
+  }, {
+    seller_gstin: company?.gstin || null,
+    seller_state_code: company?.state_code || null,
+    party_gstin: purchase.client?.gstin || purchase.vendor_gstin || null,
+    party_state_code: null
+  }, mappingRules));
+
+  const accounting_vouchers = vouchers.map((voucher) => mapVoucherRecord({
+    source_type: "ACCOUNTING_VOUCHER",
+    source_id: voucher.id,
+    voucher_type: String(voucher.voucher_type || "GENERAL").replace(/_/g, " "),
+    voucher_no: voucher.voucher_no,
+    date: dateOnly(voucher.voucher_date),
+    client_id: voucher.client_id,
+    party_ledger_name: voucher.client ? ledgerNameForClient(voucher.client) : null,
+    amount: number(voucher.total_amount),
+    narration: voucher.narration || voucher.particulars || null,
+    lines: voucher.lines.map((line) => ({
+      account_name: line.account_name,
+      entry_type: line.entry_type,
+      amount: number(line.amount),
+      description: line.description,
+      client_id: line.client_id,
+      product_id: line.product_id
+    })),
+    tally: voucherLinkBySource.get(`ACCOUNTING_VOUCHER:${voucher.id}`) || null
+  }, {}, mappingRules));
+
+  const voucherRows = [...sales_invoices, ...receipts, ...purchases_list, ...accounting_vouchers];
+
   return {
     generated_at: new Date().toISOString(),
     since: since ? since.toISOString() : null,
     integration: serializeIntegration(integration),
+    mapping_rules: mappingRules,
     counts: {
       ledgers: ledgers.length,
-      sales_invoices: invoices.length,
-      receipts: payments.length,
-      purchases: purchases.length,
-      accounting_vouchers: vouchers.length
+      system_ledgers: systemLedgers(mappingRules).length,
+      stock_items: stockItemsFromVouchers(voucherRows, mappingRules).length,
+      sales_invoices: sales_invoices.length,
+      receipts: receipts.length,
+      purchases: purchases_list.length,
+      accounting_vouchers: accounting_vouchers.length
     },
+    system_ledgers: systemLedgers(mappingRules),
+    stock_items: stockItemsFromVouchers(voucherRows, mappingRules),
     ledgers,
-    sales_invoices: invoices.map((invoice) => ({
-      source_type: "INVOICE",
-      source_id: invoice.id,
-      voucher_type: "Sales",
-      voucher_no: invoice.invoice_no,
-      date: dateOnly(invoice.issue_date),
-      due_date: dateOnly(invoice.due_date),
-      client_id: invoice.client_id,
-      party_ledger_name: ledgerNameForClient(invoice.client),
-      amount: number(invoice.total),
-      subtotal: number(invoice.subtotal),
-      charges: invoice.charges.map((charge) => ({ title: charge.title, amount: number(charge.amount), type: charge.type })),
-      items: invoice.items.map((item) => ({
-        product_id: item.product_id,
-        name: item.product?.name || item.product?.sku || "Item",
-        quantity: number(item.quantity),
-        unit_price: number(item.unit_price),
-        line_total: number(item.line_total)
-      })),
-      status: invoice.status,
-      tally: voucherLinkBySource.get(`INVOICE:${invoice.id}`) || null
-    })),
-    receipts: payments.map((payment) => ({
-      source_type: "PAYMENT",
-      source_id: payment.id,
-      voucher_type: "Receipt",
-      voucher_no: payment.payment_no || payment.id,
-      date: dateOnly(payment.paid_at),
-      client_id: payment.client_id,
-      party_ledger_name: ledgerNameForClient(payment.client),
-      amount: number(payment.amount),
-      method: payment.method,
-      reference: payment.reference,
-      allocations: payment.allocations.map((row) => ({ invoice_id: row.invoice_id, amount: number(row.amount) })),
-      tally: voucherLinkBySource.get(`PAYMENT:${payment.id}`) || null
-    })),
-    purchases: purchases.map((purchase) => ({
-      source_type: "PURCHASE",
-      source_id: purchase.id,
-      voucher_type: "Purchase",
-      voucher_no: purchase.purchase_no,
-      date: dateOnly(purchase.purchase_date),
-      client_id: purchase.client_id,
-      party_ledger_name: purchase.client ? ledgerNameForClient(purchase.client) : text(purchase.vendor_name, 160),
-      amount: number(purchase.total),
-      items: purchase.items.map((item) => ({
-        description: item.description,
-        quantity: number(item.quantity),
-        unit_price: number(item.unit_price),
-        line_total: number(item.line_total)
-      })),
-      charges: purchase.charges.map((charge) => ({ title: charge.label, amount: number(charge.amount) })),
-      tally: voucherLinkBySource.get(`PURCHASE:${purchase.id}`) || null
-    })),
-    accounting_vouchers: vouchers.map((voucher) => ({
-      source_type: "ACCOUNTING_VOUCHER",
-      source_id: voucher.id,
-      voucher_type: String(voucher.voucher_type || "GENERAL").replace(/_/g, " "),
-      voucher_no: voucher.voucher_no,
-      date: dateOnly(voucher.voucher_date),
-      client_id: voucher.client_id,
-      party_ledger_name: voucher.client ? ledgerNameForClient(voucher.client) : null,
-      amount: number(voucher.total_amount),
-      narration: voucher.narration || voucher.particulars || null,
-      lines: voucher.lines.map((line) => ({
-        account_name: line.account_name,
-        entry_type: line.entry_type,
-        amount: number(line.amount),
-        description: line.description,
-        client_id: line.client_id,
-        product_id: line.product_id
-      })),
-      tally: voucherLinkBySource.get(`ACCOUNTING_VOUCHER:${voucher.id}`) || null
-    }))
+    sales_invoices,
+    receipts,
+    purchases: purchases_list,
+    accounting_vouchers
   };
 }
 
@@ -330,5 +376,6 @@ module.exports = {
   ensureIntegration,
   serializeIntegration,
   normalizeSettingsPayload,
+  normalizeMappingRules,
   buildSyncPlan
 };

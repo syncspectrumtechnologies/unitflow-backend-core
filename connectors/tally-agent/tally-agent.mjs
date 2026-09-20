@@ -3,7 +3,7 @@ import { XMLParser } from "fast-xml-parser";
 const CORE_API_BASE_URL = String(process.env.UNITFLOW_CORE_API_BASE_URL || "").replace(/\/+$/, "");
 const CONNECTOR_TOKEN = String(process.env.UNITFLOW_TALLY_CONNECTOR_TOKEN || "");
 const TALLY_HTTP_URL = String(process.env.TALLY_HTTP_URL || "http://localhost:9000").replace(/\/+$/, "");
-const LIMIT = Math.min(500, Math.max(1, Number(process.env.TALLY_SYNC_LIMIT || 250)));
+const LIMIT = Math.min(5000, Math.max(1, Number(process.env.TALLY_SYNC_LIMIT || 250)));
 const SYNC_VOUCHERS = String(process.env.TALLY_SYNC_VOUCHERS || "true").toLowerCase() !== "false";
 const PULL_INBOUND = String(process.env.TALLY_PULL_INBOUND || "true").toLowerCase() !== "false";
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_", trimValues: true });
@@ -40,7 +40,43 @@ function ledgerEnvelope(row) {
   return envelope("All Masters", `<TALLYMESSAGE xmlns:UDF="TallyUDF"><LEDGER NAME="${xml(row.ledger_name)}" ACTION="Create"><NAME>${xml(row.ledger_name)}</NAME><PARENT>${xml(row.group || "Sundry Debtors")}</PARENT><ISBILLWISEON>Yes</ISBILLWISEON><OPENINGBALANCE>${signedOpening}</OPENINGBALANCE>${row.gstin ? `<GSTIN>${xml(row.gstin)}</GSTIN>` : ""}${row.email ? `<EMAIL>${xml(row.email)}</EMAIL>` : ""}${row.phone ? `<LEDGERPHONE>${xml(row.phone)}</LEDGERPHONE>` : ""}${row.address ? `<ADDRESS.LIST><ADDRESS>${xml(row.address)}</ADDRESS></ADDRESS.LIST>` : ""}</LEDGER></TALLYMESSAGE>`);
 }
 
+function stockItemEnvelope(row) {
+  const unit = row.unit || "PCS";
+  return envelope("All Masters", `<TALLYMESSAGE xmlns:UDF="TallyUDF"><STOCKITEM NAME="${xml(row.stock_item_name)}" ACTION="Create"><NAME>${xml(row.stock_item_name)}</NAME><PARENT>${xml(row.group || "Primary")}</PARENT><BASEUNITS>${xml(unit)}</BASEUNITS></STOCKITEM></TALLYMESSAGE>`);
+}
+
+function ledgerLinesFromEntries(record) {
+  const hasInventory = Array.isArray(record.inventory_entries) && record.inventory_entries.length > 0;
+  const entries = Array.isArray(record.ledger_entries)
+    ? record.ledger_entries.filter((entry) => !(hasInventory && ["SALES", "PURCHASE"].includes(String(entry.role || "").toUpperCase())))
+    : null;
+  if (!entries) return "";
+  return entries.map((entry) => {
+    const amount = Number(entry.amount || 0);
+    if (!entry.ledger_name || !amount) return "";
+    return `<ALLLEDGERENTRIES.LIST><LEDGERNAME>${xml(entry.ledger_name)}</LEDGERNAME><ISDEEMEDPOSITIVE>${xml(entry.is_deemed_positive || (amount < 0 ? "Yes" : "No"))}</ISDEEMEDPOSITIVE><AMOUNT>${amount}</AMOUNT></ALLLEDGERENTRIES.LIST>`;
+  }).join("");
+}
+
+function inventoryEntries(record) {
+  if (!Array.isArray(record.inventory_entries) || record.inventory_entries.length === 0) return "";
+  const type = String(record.source_type || record.voucher_type || "").toUpperCase();
+  const purchase = type.includes("PURCHASE");
+  const baseLedger = (record.ledger_entries || []).find((entry) => ["SALES", "PURCHASE"].includes(String(entry.role || "").toUpperCase()));
+  const ledgerName = baseLedger?.ledger_name || (purchase ? "UnitFlow Purchases" : "UnitFlow Sales");
+  return record.inventory_entries.map((item) => {
+    const qty = Number(item.quantity || 0);
+    const amount = Math.abs(Number(item.amount || 0));
+    if (!item.stock_item_name || !qty || !amount) return "";
+    const signedAmount = purchase ? -amount : amount;
+    const unit = item.unit || "PCS";
+    return `<ALLINVENTORYENTRIES.LIST><STOCKITEMNAME>${xml(item.stock_item_name)}</STOCKITEMNAME><ISDEEMEDPOSITIVE>${purchase ? "Yes" : "No"}</ISDEEMEDPOSITIVE><RATE>${Number(item.rate || 0)}/${xml(unit)}</RATE><AMOUNT>${signedAmount}</AMOUNT><ACTUALQTY>${qty} ${xml(unit)}</ACTUALQTY><BILLEDQTY>${qty} ${xml(unit)}</BILLEDQTY><ACCOUNTINGALLOCATIONS.LIST><LEDGERNAME>${xml(ledgerName)}</LEDGERNAME><ISDEEMEDPOSITIVE>${purchase ? "Yes" : "No"}</ISDEEMEDPOSITIVE><AMOUNT>${signedAmount}</AMOUNT></ACCOUNTINGALLOCATIONS.LIST></ALLINVENTORYENTRIES.LIST>`;
+  }).join("");
+}
+
 function voucherLedgerLines(record) {
+  const mapped = ledgerLinesFromEntries(record);
+  if (mapped) return mapped;
   const amount = Math.abs(Number(record.amount || 0));
   const party = record.party_ledger_name || "Suspense";
   const type = String(record.voucher_type || "").toLowerCase();
@@ -63,7 +99,8 @@ function voucherLedgerLines(record) {
 function voucherEnvelope(record) {
   const type = record.voucher_type || "Journal";
   const number = record.voucher_no || record.source_id;
-  return envelope("Vouchers", `<TALLYMESSAGE xmlns:UDF="TallyUDF"><VOUCHER VCHTYPE="${xml(type)}" ACTION="Create"><DATE>${tallyDate(record.date)}</DATE><VOUCHERTYPENAME>${xml(type)}</VOUCHERTYPENAME><VOUCHERNUMBER>${xml(number)}</VOUCHERNUMBER><PARTYLEDGERNAME>${xml(record.party_ledger_name || "")}</PARTYLEDGERNAME><NARRATION>${xml(record.narration || `UnitFlow ${record.source_type} ${number}`)}</NARRATION>${voucherLedgerLines(record)}</VOUCHER></TALLYMESSAGE>`);
+  const view = Array.isArray(record.inventory_entries) && record.inventory_entries.length ? "Invoice Voucher View" : "Accounting Voucher View";
+  return envelope("Vouchers", `<TALLYMESSAGE xmlns:UDF="TallyUDF"><VOUCHER VCHTYPE="${xml(type)}" ACTION="Create"><DATE>${tallyDate(record.date)}</DATE><VOUCHERTYPENAME>${xml(type)}</VOUCHERTYPENAME><VOUCHERNUMBER>${xml(number)}</VOUCHERNUMBER><PARTYLEDGERNAME>${xml(record.party_ledger_name || "")}</PARTYLEDGERNAME><PERSISTEDVIEW>${view}</PERSISTEDVIEW><NARRATION>${xml(record.narration || `UnitFlow ${record.source_type} ${number}`)}</NARRATION>${inventoryEntries(record)}${voucherLedgerLines(record)}</VOUCHER></TALLYMESSAGE>`);
 }
 
 async function unitflow(path, options = {}) {
@@ -189,7 +226,9 @@ async function main() {
   required("UNITFLOW_TALLY_CONNECTOR_TOKEN", CONNECTOR_TOKEN);
 
   const plan = await unitflow(`/tally/connector/sync-plan?limit=${LIMIT}`);
+  const systemLedgerResults = await syncRows(plan.system_ledgers || [], ledgerEnvelope);
   const ledgerResults = await syncRows(plan.ledgers || [], ledgerEnvelope);
+  const stockItemResults = await syncRows(plan.stock_items || [], stockItemEnvelope);
   const voucherRecords = SYNC_VOUCHERS
     ? [
         ...(plan.sales_invoices || []),
@@ -229,7 +268,7 @@ async function main() {
     console.log(`UnitFlow inbound reconciliation submitted: ${snapshot.ledgers.length} ledgers, ${snapshot.vouchers.length} vouchers`);
   }
 
-  console.log(`UnitFlow Tally sync completed: ${ledgerResults.length} ledgers, ${voucherResults.length} vouchers`);
+  console.log(`UnitFlow Tally sync completed: ${ledgerResults.length} ledgers, ${stockItemResults.length} stock items, ${voucherResults.length} vouchers, ${systemLedgerResults.length} system ledgers`);
 }
 
 main().catch((error) => {

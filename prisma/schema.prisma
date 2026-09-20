@@ -1384,6 +1384,7 @@ model TallyIntegration {
   allow_tally_import      Boolean   @default(false)
   conflict_strategy       String    @default("REVIEW")
   reconciliation_tolerance Decimal   @default(1) @db.Decimal(15, 2)
+  mapping_rules           Json?
   connector_token_hash    String?   @unique
   connector_token_last4   String?
   connector_last_seen_at  DateTime?

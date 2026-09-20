@@ -1,0 +1,12 @@
+{
+  "name": "unitflow-tally-agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node tally-agent.mjs"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^5.11.1"
+  }
+}
