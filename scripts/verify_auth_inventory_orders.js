@@ -517,6 +517,7 @@ async function cleanupCompany(companyId) {
       process.exitCode = 1;
     });
     await prisma.$disconnect().catch(() => null);
+    process.exit(process.exitCode || 0);
   }
 })();
 

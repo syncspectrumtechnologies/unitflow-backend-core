@@ -13,7 +13,8 @@
     "test:tally-mapping": "node scripts/test-tally-mapping.js",
     "prisma:generate": "node scripts/prisma-generate.js",
     "prisma:migrate": "node scripts/prisma-migrate-deploy.js",
-    "verify:e2e": "node scripts/verify_auth_inventory_orders.js"
+    "verify:e2e": "node scripts/verify_auth_inventory_orders.js",
+    "test": "npm run smoke:test && npm run test:tally-mapping && npm run test:tally-reconciliation"
   },
   "keywords": [],
   "author": "Sync Spectrum Technologies",

@@ -21,14 +21,14 @@ jobs:
       - name: Set up Node.js version
         uses: actions/setup-node@v4
         with:
-          node-version: '24.x'
+          node-version: '22.x'
           cache: 'npm'
 
       - name: npm install, build, and test
         run: |
           npm ci
-          npm run build --if-present
-          npm run test --if-present
+          npm audit --omit=dev --audit-level=high
+          npm test
 
       - name: Create deployment package
         run: |
